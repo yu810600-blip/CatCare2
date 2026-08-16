@@ -75,7 +75,24 @@ function Chart({entries}:{entries:Entry[]}){const pts=(entries.length?entries:DE
 function Panel({title,sub,img,children}:{title:string;sub:string;img:string;children:React.ReactNode}){return <section className="page-panel"><div className="panel-copy"><p className="eyebrow">DAILY LOG</p><h2>{title}</h2><p>{sub}</p></div><img src={img} alt="貓咪水彩插畫"/>{children}</section>}
 function Field({label,name,type="number",step,children}:{label:string;name:string;type?:string;step?:string;children?:React.ReactNode}){return <label><span>{label}</span>{children||<input name={name} type={type} step={step}/>}</label>}
 const Submit=()=> <button className="primary" type="submit">收進貓咪日記</button>;
-function History({entries,cat}:{entries:Entry[];cat:string}){const filtered=entries.filter(e=>e.category===cat),rows=cat==="symptoms"?[...new Map(filtered.map(e=>[e.recordedAt,{...e,data:Object.assign({},...filtered.filter(x=>x.recordedAt===e.recordedAt).map(x=>x.data))}])).values()].slice(0,6):filtered.slice(0,6);return <section className="history"><h3>最近紀錄</h3>{rows.length?rows.map(e=><div key={`${cat}-${e.recordedAt}-${e.id}`}><time>{e.recordedAt}</time><p>{[...new Set(Object.values(e.data).map(String))].map((v,i)=><span key={i}>{v}</span>)}</p></div>):<p className="empty">還沒有紀錄，從今天開始吧。</p>}</section>}
+function symptomSummary(rows:Entry[]){
+  const values:string[]=[];
+  for(const row of rows){
+    for(const [key,value] of Object.entries(row.data)){
+      if(key.startsWith("symptom_")){const name=key.slice(8);if(!values.some(x=>x.startsWith(`${name} `))) values.push(`${name} ${row.data[`severity_${name}`]??"–"}/10`)}
+      if(key==="symptoms"&&value&&value!=="無明顯不適"&&!values.some(x=>x.startsWith(`${value} `))) values.push(`${value} ${row.data.severity??"–"}/10`);
+    }
+  }
+  const water=rows.find(e=>e.data.water!==""&&e.data.water!=null)?.data.water;
+  const notes=rows.find(e=>String(e.data.notes||"").trim())?.data.notes;
+  if(water!==undefined) values.push(`飲水 ${water} ml`); if(notes) values.push(`備註 ${notes}`);
+  return values.length?values:["無明顯不適"];
+}
+function History({entries,cat}:{entries:Entry[];cat:string}){
+  const filtered=entries.filter(e=>e.category===cat),groups=[...new Map(filtered.map(e=>[e.recordedAt,filtered.filter(x=>x.recordedAt===e.recordedAt)])).entries()].slice(0,6);
+  if(cat==="symptoms") return <section className="history"><h3>最近紀錄</h3>{groups.length?groups.map(([date,rows])=><div key={date}><time>{date}</time><p>{symptomSummary(rows).map(v=><span key={v}>{v}</span>)}</p></div>):<p className="empty">還沒有紀錄，從今天開始吧。</p>}</section>;
+  const rows=filtered.slice(0,6);return <section className="history"><h3>最近紀錄</h3>{rows.length?rows.map(e=><div key={`${cat}-${e.recordedAt}-${e.id}`}><time>{e.recordedAt}</time><p>{Object.values(e.data).map((v,i)=><span key={i}>{String(v)}</span>)}</p></div>):<p className="empty">還沒有紀錄，從今天開始吧。</p>}</section>
+}
 function Form({cat,save,children}:{cat:string;save:Save;children:React.ReactNode}){return <form onSubmit={(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();save(cat,e.currentTarget)}}>{children}{cat==="food"&&<Field label="品牌" name="brand"><input name="brand" list="brands" placeholder="例：桂格、義美、品牌自填"/></Field>}<Submit/></form>}
 
 function Body({entries,save}:{entries:Entry[];save:Save}){const machines=[...new Set(entries.map(e=>String(e.data.machine)).filter(Boolean))];return <><Panel title="身體數值" sub="每一個小數字，都是你認真生活的證據。" img="/cat-tabby.jpg"><Form cat="body" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="體重 (kg)" name="weight" step="0.1"/><Field label="體脂 (%)" name="fat" step="0.1"/><Field label="腰圍 (cm)" name="waist" step="0.1"/><Field label="胸圍 (cm)" name="chest" step="0.1"/><Field label="肌肉量 (kg)" name="muscle" step="0.1"/><Field label="測量機器" name="machine"><><input name="machine" list="machines" placeholder="例：InBody 270"/><datalist id="machines">{machines.map(x=><option key={x}>{x}</option>)}</datalist></></Field></Form></Panel><div className="card wide-chart"><Title title="體重趨勢"/><Chart entries={entries}/></div><History entries={entries} cat="body"/></>}
