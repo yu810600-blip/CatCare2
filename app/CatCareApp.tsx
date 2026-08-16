@@ -11,6 +11,10 @@ const NAV = [
   ["food", "飲食熱量", "◇"], ["injection", "施打紀錄", "+"], ["exercise", "運動消耗", "△"],
 ] as const;
 const FOODS = [["舒肥雞胸",165],["茶葉蛋",141],["白飯",130],["地瓜",115],["鮭魚",208],["高麗菜",23],["無糖豆漿",33],["香蕉",89],["燕麥",379],["牛肉",250]] as const;
+const CATS = [
+  ["/cat-white.jpg", "白貓"], ["/cat-tabby.jpg", "虎斑貓"], ["/cat-orange.jpg", "橘貓"],
+  ["/cat-calico.jpg", "橘白貓"], ["/cat-box.jpg", "紙箱白貓"],
+] as const;
 const DEMO: Entry[] = [
   {id:1,category:"body",recordedAt:"2026-08-02",data:{weight:78.2,fat:36.1,waist:92,chest:101,muscle:27.5,machine:"InBody 270"}},
   {id:2,category:"body",recordedAt:"2026-08-09",data:{weight:77.4,fat:35.6,waist:91,chest:100,muscle:27.7,machine:"InBody 270"}},
@@ -25,7 +29,10 @@ export default function CatCareApp({section}:{section:string}) {
   const active = NAV.some(x=>x[0]===section) ? section : "home";
   const [entries,setEntries] = useState<Entry[]>(DEMO);
   const [notice,setNotice] = useState("");
+  const [cat,setCat] = useState<string>(CATS[0][0]);
   useEffect(()=>{ fetch("/api/entries").then(r=>r.ok?r.json():null).then(v=>v?.entries?.length&&setEntries(v.entries)).catch(()=>{}); },[]);
+  useEffect(()=>{ const saved=localStorage.getItem("catcare-cat"); if(saved&&CATS.some(x=>x[0]===saved)) setCat(saved); },[]);
+  function chooseCat(value:string){ setCat(value); localStorage.setItem("catcare-cat",value); }
   async function save(category:string,form:HTMLFormElement){
     const raw=Object.fromEntries(new FormData(form)); const recordedAt=String(raw.recordedAt||today()); delete raw.recordedAt;
     const data=Object.fromEntries(Object.entries(raw).map(([k,v])=>[k,v!==""&&!Number.isNaN(Number(v))?Number(v):String(v)]));
@@ -40,23 +47,24 @@ export default function CatCareApp({section}:{section:string}) {
   return <div className="shell"><aside>
     <a className="brand" href="/"><b>♥</b><span>貓貓輕生活<small>CAT CARE TRACKER</small></span></a>
     <nav>{NAV.map(([key,label,icon])=><a key={key} href={key==="home"?"/":`/${key}`} className={active===key?"active":""}><b>{icon}</b>{label}</a>)}</nav>
-    <div className="aside-cat"><img src="/cat-box.jpg" alt="紙箱裡的白貓水彩畫"/><p>今天也有好好照顧自己嗎？</p></div>
+    <div className="aside-cat"><img src={cat} alt="已選擇的貓咪水彩畫"/><p>今天也有好好照顧自己嗎？</p></div>
     <p className="medical-note">僅供個人紀錄，不取代醫療建議。持續或嚴重不適請立即就醫。</p>
   </aside><main>
-    <header><div><p className="eyebrow">SUNDAY · 16 AUG</p><h1>{NAV.find(x=>x[0]===active)?.[1]}</h1></div><div className="avatar"><span>今日連續 <b>12</b> 天</span><img src="/cat-calico.jpg" alt="貓咪大頭照"/></div></header>
+    <header><div><p className="eyebrow">SUNDAY · 16 AUG</p><h1>{NAV.find(x=>x[0]===active)?.[1]}</h1></div><div className="avatar"><label className="cat-picker"><span>我的貓咪</span><select value={cat} onChange={e=>chooseCat(e.target.value)} aria-label="選擇網站貓咪圖片">{CATS.map(([src,name])=><option value={src} key={src}>{name}</option>)}</select></label><img src={cat} alt="目前選擇的貓咪"/></div></header>
     {notice&&<div className="toast">{notice}</div>}
-    {active==="home"&&<Dashboard latest={latest} body={body} intake={intake} burn={burn} entries={entries}/>} 
+    <datalist id="brands">{[...new Set(entries.filter(e=>e.category==="food").map(e=>String(e.data.brand||"")).filter(Boolean))].map(x=><option key={x}>{x}</option>)}</datalist>
+    {active==="home"&&<Dashboard latest={latest} body={body} intake={intake} burn={burn} entries={entries} cat={cat}/>} 
     {active==="body"&&<Body entries={body} save={save}/>} {active==="symptoms"&&<Symptoms entries={entries} save={save}/>} 
     {active==="food"&&<Food entries={entries} save={save}/>} {active==="injection"&&<Injection entries={entries} save={save}/>} 
     {active==="exercise"&&<Exercise entries={entries} save={save}/>} 
   </main></div>;
 }
 
-function Dashboard({latest,body,intake,burn,entries}:{latest:Data;body:Entry[];intake:number;burn:number;entries:Entry[]}){
+function Dashboard({latest,body,intake,burn,entries,cat}:{latest:Data;body:Entry[];intake:number;burn:number;entries:Entry[];cat:string}){
   const inj=entries.find(e=>e.category==="injection")?.data||DEMO[3].data;
-  return <><section className="hero"><div><span className="sticker">今日狀態 ♡</span><h2>一點點前進，<br/><em>身體會記得。</em></h2><p>今天的你已經很棒了，完成一筆紀錄，讓改變有跡可循。</p><a className="primary" href="/body">+　記錄今日數值</a></div><img src="/cat-white.jpg" alt="白貓水彩插畫"/></section>
+  return <><section className="hero"><div><span className="sticker">今日狀態 ♡</span><h2>一點點前進，<br/><em>身體會記得。</em></h2><p>今天的你已經很棒了，完成一筆紀錄，讓改變有跡可循。</p><a className="primary" href="/body">+　記錄今日數值</a></div><img src={cat} alt="已選擇的貓咪水彩插畫"/></section>
   <section className="metrics"><Metric c="pink" l="目前體重" v={`${latest.weight} kg`} s="↓ 1.4 kg 本月"/><Metric c="lilac" l="體脂率" v={`${latest.fat}%`} s="↓ 1.0% 本月"/><Metric c="mint" l="今日攝取" v={`${intake||1280} kcal`} s="目標 1,650 kcal"/><Metric c="yellow" l="今日消耗" v={`${burn||380} kcal`} s="包含活動紀錄"/></section>
-  <section className="grid-two"><div className="card chart-card"><Title title="體重變化"/><Chart entries={body}/></div><div className="card injection-card"><img src="/cat-orange.jpg" alt="戴紅領結的橘貓"/><div><p>NEXT INJECTION</p><h3>下次施打提醒</h3><strong>{inj.medicine} · {inj.dose}</strong><span>{String(inj.next).replace("T"," ")}</span><a href="/injection">管理施打紀錄 →</a></div></div></section>
+  <section className="grid-two"><div className="card chart-card"><Title title="體重變化"/><Chart entries={body}/></div><div className="card injection-card"><img src={cat} alt="已選擇的貓咪"/><div><p>NEXT INJECTION</p><h3>下次施打提醒</h3><strong>{inj.medicine} · {inj.dose}</strong><span>{String(inj.next).replace("T"," ")}</span><a href="/injection">管理施打紀錄 →</a></div></div></section>
   <section className="quick"><h3>快速補記</h3><div>{NAV.slice(1).map(([k,l,i])=><a href={`/${k}`} key={k}><b>{i}</b>{l}<span>→</span></a>)}</div></section></>;
 }
 function Metric({c,l,v,s}:{c:string;l:string;v:string;s:string}){return <div className={`metric ${c}`}><span>{l}</span><strong>{v}</strong><small>{s}</small></div>}
@@ -66,8 +74,8 @@ function Chart({entries}:{entries:Entry[]}){const pts=(entries.length?entries:DE
 function Panel({title,sub,img,children}:{title:string;sub:string;img:string;children:React.ReactNode}){return <section className="page-panel"><div className="panel-copy"><p className="eyebrow">DAILY LOG</p><h2>{title}</h2><p>{sub}</p></div><img src={img} alt="貓咪水彩插畫"/>{children}</section>}
 function Field({label,name,type="number",step,children}:{label:string;name:string;type?:string;step?:string;children?:React.ReactNode}){return <label><span>{label}</span>{children||<input name={name} type={type} step={step}/>}</label>}
 const Submit=()=> <button className="primary" type="submit">收進貓咪日記</button>;
-function History({entries,cat}:{entries:Entry[];cat:string}){const rows=entries.filter(e=>e.category===cat).slice(0,6);return <section className="history"><h3>最近紀錄</h3>{rows.length?rows.map(e=><div key={e.id}><time>{e.recordedAt}</time><p>{Object.values(e.data).map((v,i)=><span key={i}>{String(v)}</span>)}</p></div>):<p className="empty">還沒有紀錄，從今天開始吧。</p>}</section>}
-function Form({cat,save,children}:{cat:string;save:Save;children:React.ReactNode}){return <form onSubmit={(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();save(cat,e.currentTarget)}}>{children}<Submit/></form>}
+function History({entries,cat}:{entries:Entry[];cat:string}){const filtered=entries.filter(e=>e.category===cat),rows=cat==="symptoms"?[...new Map(filtered.map(e=>[e.recordedAt,{...e,data:Object.assign({},...filtered.filter(x=>x.recordedAt===e.recordedAt).map(x=>x.data))}])).values()].slice(0,6):filtered.slice(0,6);return <section className="history"><h3>最近紀錄</h3>{rows.length?rows.map(e=><div key={`${cat}-${e.recordedAt}-${e.id}`}><time>{e.recordedAt}</time><p>{[...new Set(Object.values(e.data).map(String))].map((v,i)=><span key={i}>{v}</span>)}</p></div>):<p className="empty">還沒有紀錄，從今天開始吧。</p>}</section>}
+function Form({cat,save,children}:{cat:string;save:Save;children:React.ReactNode}){return <form onSubmit={(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();save(cat,e.currentTarget)}}>{children}{cat==="food"&&<Field label="品牌" name="brand"><input name="brand" list="brands" placeholder="例：桂格、義美、品牌自填"/></Field>}<Submit/></form>}
 
 function Body({entries,save}:{entries:Entry[];save:Save}){const machines=[...new Set(entries.map(e=>String(e.data.machine)).filter(Boolean))];return <><Panel title="身體數值" sub="每一個小數字，都是你認真生活的證據。" img="/cat-tabby.jpg"><Form cat="body" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="體重 (kg)" name="weight" step="0.1"/><Field label="體脂 (%)" name="fat" step="0.1"/><Field label="腰圍 (cm)" name="waist" step="0.1"/><Field label="胸圍 (cm)" name="chest" step="0.1"/><Field label="肌肉量 (kg)" name="muscle" step="0.1"/><Field label="測量機器" name="machine"><><input name="machine" list="machines" placeholder="例：InBody 270"/><datalist id="machines">{machines.map(x=><option key={x}>{x}</option>)}</datalist></></Field></Form></Panel><div className="card wide-chart"><Title title="體重趨勢"/><Chart entries={entries}/></div><History entries={entries} cat="body"/></>}
 function Symptoms({entries,save}:{entries:Entry[];save:Save}){return <><Panel title="每日生理狀況" sub="溫柔觀察身體的訊號，需要時就向醫療人員求助。" img="/cat-white.jpg"><Form cat="symptoms" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="今日狀況" name="symptoms"><select name="symptoms"><option>無明顯不適</option><option>頭暈</option><option>噁心</option><option>嘔吐</option><option>腹瀉</option><option>便秘</option><option>腹痛</option><option>疲倦</option><option>食慾低下</option></select></Field><Field label="嚴重程度 0–10" name="severity" type="range"/><Field label="飲水量 (ml)" name="water"/><Field label="備註" name="notes"><input name="notes" placeholder="何時發生、持續多久…"/></Field></Form></Panel><div className="alert">若有持續劇烈腹痛、無法進食飲水、意識改變等情形，請立即聯繫醫療人員或急診。</div><History entries={entries} cat="symptoms"/></>}
