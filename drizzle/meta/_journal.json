@@ -8,6 +8,13 @@
       "when": 1786874394625,
       "tag": "0000_open_namorita",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786882688395,
+      "tag": "0001_wide_echo",
+      "breakpoints": true
     }
   ]
 }
