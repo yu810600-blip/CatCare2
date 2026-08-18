@@ -52,6 +52,22 @@ npm run build:pages
 
 輸出到 `docs/`，該資料夾是建置產物，請不要直接編輯。
 
+## iOS App
+
+`ios/` 是 Capacitor 專案，包的是和 GitHub Pages 版**同一份**建置產物（`docs/`），
+資料同樣存在裝置本機，不需要登入。
+
+```bash
+npm run build:pages   # 網頁有改動時先重建
+npx cap sync ios      # 把 docs/ 同步進 iOS 專案
+```
+
+在模擬器跑：用 Xcode 開 `ios/App/App.xcodeproj`，選一台 iPhone 按 Run。
+
+裝到自己的 iPhone：手機接上 Mac，Xcode 的 Signing & Capabilities 用自己的
+Apple ID 選一個 Team（免費帳號即可），目標裝置選你的手機按 Run。
+免費簽名的 app 七天後要重新安裝一次。
+
 ## 更新食品營養資料
 
 `public/food-nutrition.json` 由衛生福利部食品藥物管理署的「食品營養成分資料集」轉換而來，
