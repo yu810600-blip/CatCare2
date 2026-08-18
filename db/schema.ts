@@ -19,5 +19,8 @@ export const profiles = sqliteTable("profiles", {
   height: real("height").notNull().default(0),
   targetWeight: real("target_weight").notNull().default(0),
   calorieGoal: integer("calorie_goal").notNull().default(0),
+  startWeight: real("start_weight").notNull().default(0),
+  programStart: text("program_start").notNull().default(""),
+  programWeeks: integer("program_weeks").notNull().default(0),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });

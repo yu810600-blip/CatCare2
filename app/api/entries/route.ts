@@ -1,9 +1,9 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { entries } from "../../../db/schema";
 import { getChatGPTUser } from "../../chatgpt-auth";
 
-const allowed = new Set(["body", "symptoms", "food", "injection", "exercise"]);
+const allowed = new Set(["body", "symptoms", "food", "injection", "exercise", "water"]);
 
 export async function GET() {
   try {
@@ -28,5 +28,20 @@ export async function POST(request: Request) {
     return Response.json({ entry }, { status: 201 });
   } catch {
     return Response.json({ error: "暫時無法儲存" }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const user = await getChatGPTUser();
+    if (!user) return Response.json({ error: "請先登入" }, { status: 401 });
+    const id = Number(new URL(request.url).searchParams.get("id"));
+    if (!Number.isInteger(id) || id <= 0) return Response.json({ error: "缺少紀錄編號" }, { status: 400 });
+    // 一定要同時比對 userId，否則帶別人的 id 就能刪到別人的紀錄。
+    const [removed] = await getDb().delete(entries).where(and(eq(entries.id, id), eq(entries.userId, user.userId))).returning();
+    if (!removed) return Response.json({ error: "找不到這筆紀錄" }, { status: 404 });
+    return Response.json({ id: removed.id });
+  } catch {
+    return Response.json({ error: "暫時無法刪除" }, { status: 500 });
   }
 }
