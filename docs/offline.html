@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f6b8c4" />
+    <title>目前離線｜貓貓輕生活</title>
+    <link rel="icon" href="/favicon.svg" />
+    <style>
+      *{box-sizing:border-box}
+      body{margin:0;min-height:100vh;display:grid;place-items:center;padding:28px;
+        background:#f6f2ec radial-gradient(#eadfe2 1px,transparent 1px) 0 0/24px 24px;
+        color:#3d3a46;font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif}
+      main{max-width:380px;text-align:center;background:#fffdf9;border:1px solid #e8e2dc;
+        border-radius:28px;padding:36px 30px;box-shadow:0 8px 22px #6354660b}
+      img{width:104px;height:104px;border-radius:50%;object-fit:cover}
+      h1{font-family:Georgia,"Noto Serif TC",serif;font-size:24px;margin:18px 0 10px}
+      p{font-size:13px;line-height:1.8;color:#756e79;margin:0 0 22px}
+      button{border:0;background:#4e4857;color:#fff;padding:12px 22px;border-radius:12px;
+        font:inherit;font-size:13px;font-weight:800;cursor:pointer;box-shadow:0 7px 15px #4e48572b}
+      small{display:block;margin-top:18px;font-size:11px;color:#9a949c;line-height:1.6}
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/icon-192.png" alt="貓貓輕生活" />
+      <h1>目前沒有網路</h1>
+      <p>健康紀錄存在雲端資料庫，需要連線才能讀取和儲存。等網路回來後再試一次就好。</p>
+      <button type="button" onclick="location.reload()">重新連線</button>
+      <small>為了保護隱私，這個網站不會把你的健康紀錄留在裝置的快取裡。</small>
+    </main>
+  </body>
+</html>

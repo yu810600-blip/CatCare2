@@ -10,6 +10,7 @@ import {
   type Data, type Entry, type ProfileData, type TodayTask, type WeightPoint,
 } from "./health";
 import { NUTRIENT_KEYS, NUTRIENT_LABELS, scaleFood, searchFoods, type FoodDb, type FoodRow } from "./food-db";
+import { asset } from "./asset";
 
 // 登出路徑由平台攔截處理，不是 app 內的頁面，所以維持原生 <a>。
 // eslint-disable-next-line @next/next/no-html-link-for-pages
@@ -39,7 +40,7 @@ const SYMPTOMS = ["頭暈","噁心","嘔吐","腹瀉","便秘","腹痛","疲倦"
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"] as const;
 const QUICK_WATER = [250, 500, 750] as const;
 
-export default function CatCareApp({section,user}:{section:string;user:User}) {
+export default function CatCareApp({section,user,local=false}:{section:string;user:User;local?:boolean}) {
   const active = NAV.some(x=>x[0]===section) ? section : "home";
   const [entries,setEntries] = useState<Entry[]>([]);
   const [profile,setProfile] = useState<ProfileData>({...EMPTY_PROFILE,email:user.email,displayName:user.displayName});
@@ -50,7 +51,7 @@ export default function CatCareApp({section,user}:{section:string;user:User}) {
   useEffect(()=>{ fetch("/api/profile").then(r=>r.ok?r.json():null).then(v=>v?.profile&&setProfile(p=>({...p,...v.profile}))).catch(()=>{}); },[]);
   useEffect(()=>{ const saved=localStorage.getItem("catcare-cat"); if(saved&&CATS.some(x=>x[0]===saved)) setCat(saved); },[]);
   // 註冊 service worker，手機才能「加到主畫面」並在離線時看到說明頁。
-  useEffect(()=>{ if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{}); },[]);
+  useEffect(()=>{ if("serviceWorker" in navigator) navigator.serviceWorker.register(asset("/sw.js")).catch(()=>{}); },[]);
   function chooseCat(value:string){ setCat(value); localStorage.setItem("catcare-cat",value); }
   function flash(message:string){ setNotice(message); setTimeout(()=>setNotice(""),2500); }
   async function saveData(category:string,recordedAt:string,data:Data){
@@ -77,10 +78,10 @@ export default function CatCareApp({section,user}:{section:string;user:User}) {
   return <RemoveEntry.Provider value={removeEntry}><div className="shell"><aside>
     <Link className="brand" href="/"><b>♥</b><span>貓貓輕生活<small>CAT CARE TRACKER</small></span></Link>
     <nav>{NAV.map(([key,label,icon])=><Link key={key} href={key==="home"?"/":`/${key}`} className={active===key?"active":""}><b>{icon}</b>{label}</Link>)}</nav>
-    <div className="aside-cat"><img src={cat} alt="已選擇的貓咪水彩畫"/><p>今天也有好好照顧自己嗎？</p></div>
+    <div className="aside-cat"><img src={asset(cat)} alt="已選擇的貓咪水彩畫"/><p>今天也有好好照顧自己嗎？</p></div>
     <p className="medical-note">僅供個人紀錄，不取代醫療建議。持續或嚴重不適請立即就醫。</p>
   </aside><main>
-    <header><div><p className="eyebrow">MY PRIVATE HEALTH LOG</p><h1>{LABELS[active]}</h1></div><div className="avatar"><label className="cat-picker"><span>我的貓咪</span><select value={cat} onChange={e=>chooseCat(e.target.value)} aria-label="選擇網站貓咪圖片">{CATS.map(([src,name])=><option value={src} key={src}>{name}</option>)}</select></label><div className="account"><Link href="/profile">{profile.displayName||user.displayName}</Link><SignOut label="登出"/></div><img src={cat} alt="目前選擇的貓咪"/></div></header>
+    <header><div><p className="eyebrow">MY PRIVATE HEALTH LOG</p><h1>{LABELS[active]}</h1></div><div className="avatar"><label className="cat-picker"><span>我的貓咪</span><select value={cat} onChange={e=>chooseCat(e.target.value)} aria-label="選擇網站貓咪圖片">{CATS.map(([src,name])=><option value={src} key={src}>{name}</option>)}</select></label><div className="account"><Link href="/profile">{profile.displayName||user.displayName}</Link>{local?<span>資料存在此裝置</span>:<SignOut label="登出"/>}</div><img src={asset(cat)} alt="目前選擇的貓咪"/></div></header>
     {notice&&<div className="toast">{notice}</div>}
     <datalist id="brands">{[...new Set(entries.filter(e=>e.category==="food").map(e=>String(e.data.brand||"")).filter(Boolean))].map(x=><option key={x}>{x}</option>)}</datalist>
     {active==="home"&&<Dashboard entries={entries} profile={profile} series={series} cat={cat}/>}
@@ -88,7 +89,7 @@ export default function CatCareApp({section,user}:{section:string;user:User}) {
     {active==="food"&&<Food entries={entries} profile={profile} save={save}/>} {active==="water"&&<Water entries={entries} save={save} saveData={saveData}/>}
     {active==="exercise"&&<Exercise entries={entries} save={save}/>} {active==="injection"&&<Injection entries={entries} save={save}/>}
     {active==="calendar"&&<CalendarPage entries={entries}/>} {active==="insights"&&<Insights entries={entries} profile={profile} series={series}/>}
-    {active==="profile"&&<Profile user={user} profile={profile} setProfile={setProfile}/>}
+    {active==="profile"&&<Profile user={user} profile={profile} setProfile={setProfile} local={local}/>}
   </main></div></RemoveEntry.Provider>;
 }
 
@@ -110,7 +111,7 @@ function Dashboard({entries,profile,series,cat}:{entries:Entry[];profile:Profile
   const missing=[!goal.hasTarget&&"目標體重",!program.hasStart&&"療程開始日",!program.hasLength&&"預計療程長度"].filter(Boolean) as string[];
   return <>
     <section className="today-hero">
-      <img src={cat} alt="今天陪伴你的貓咪"/>
+      <img src={asset(cat)} alt="今天陪伴你的貓咪"/>
       <div>
         <span className="sticker">{formatDate(today)} · 今天也在前進 ♡</span>
         <h2>{goal.hasWeight?<>目前 <em>{goal.current} kg</em></>:<>還沒有體重紀錄</>}</h2>
@@ -303,7 +304,7 @@ function Insights({entries,profile,series}:{entries:Entry[];profile:ProfileData;
 
 /* ---------- 個人資料 ---------- */
 
-function Profile({user,profile,setProfile}:{user:User;profile:ProfileData;setProfile:(value:ProfileData)=>void}){
+function Profile({user,profile,setProfile,local}:{user:User;profile:ProfileData;setProfile:(value:ProfileData)=>void;local:boolean}){
   const [message,setMessage]=useState("");
   async function submit(e:FormEvent<HTMLFormElement>){
     e.preventDefault();
@@ -312,10 +313,10 @@ function Profile({user,profile,setProfile}:{user:User;profile:ProfileData;setPro
     setTimeout(()=>setMessage(""),2500);
   }
   const set=(patch:Partial<ProfileData>)=>setProfile({...profile,...patch});
-  return <section className="profile-page"><div className="profile-intro"><span>PRIVATE PROFILE</span><h2>只屬於你的健康後台</h2><p>登入後只會看到自己建立的紀錄。這裡設定的目標與療程資訊，會直接決定總覽頁的進度計算。</p><div className="identity"><b>{profile.displayName||user.displayName}</b><small>{user.email}</small></div></div>
+  return <section className="profile-page"><div className="profile-intro"><span>PRIVATE PROFILE</span><h2>只屬於你的健康後台</h2><p>{local?"這個版本把紀錄存在你目前這台裝置的瀏覽器裡，不會上傳。清除瀏覽器資料或換一台裝置就看不到了。":"登入後只會看到自己建立的紀錄。"}這裡設定的目標與療程資訊，會直接決定總覽頁的進度計算。</p><div className="identity"><b>{profile.displayName||user.displayName}</b><small>{local?"本機儲存":user.email}</small></div></div>
     <form className="profile-form" onSubmit={submit}>
       <h3>基本資料</h3>
-      <label><span>登入信箱</span><input value={user.email} readOnly/></label>
+      {!local&&<label><span>登入信箱</span><input value={user.email} readOnly/></label>}
       <label><span>顯示名稱</span><input value={profile.displayName} onChange={e=>set({displayName:e.target.value})}/></label>
       <label><span>生日</span><input type="date" value={profile.birthday} onChange={e=>set({birthday:e.target.value})}/></label>
       <label><span>生理性別</span><select value={profile.sex} onChange={e=>set({sex:e.target.value})}><option value="">未設定</option><option value="female">女性</option><option value="male">男性</option><option value="other">其他／不透露</option></select></label>
@@ -328,14 +329,14 @@ function Profile({user,profile,setProfile}:{user:User;profile:ProfileData;setPro
       <label><span>療程開始日</span><input type="date" value={profile.programStart} onChange={e=>set({programStart:e.target.value})}/></label>
       <label><span>預計療程長度 (週)</span><input type="number" min="0" value={profile.programWeeks||""} onChange={e=>set({programWeeks:Number(e.target.value)})}/></label>
       <p className="profile-note">療程長度或目標改動後，總覽頁的天數、週數、剩餘時間與完成百分比都會重新計算。</p>
-      <div className="profile-actions"><button className="primary" type="submit">儲存個人資料</button><SignOut label="登出帳號"/>{message&&<span>{message}</span>}</div>
+      <div className="profile-actions"><button className="primary" type="submit">儲存個人資料</button>{!local&&<SignOut label="登出帳號"/>}{message&&<span>{message}</span>}</div>
     </form>
   </section>;
 }
 
 /* ---------- 各項紀錄頁 ---------- */
 
-function Panel({title,sub,img,children}:{title:string;sub:string;img:string;children:React.ReactNode}){return <section className="page-panel"><div className="panel-copy"><p className="eyebrow">DAILY LOG</p><h2>{title}</h2><p>{sub}</p></div><img src={img} alt="貓咪水彩插畫"/>{children}</section>}
+function Panel({title,sub,img,children}:{title:string;sub:string;img:string;children:React.ReactNode}){return <section className="page-panel"><div className="panel-copy"><p className="eyebrow">DAILY LOG</p><h2>{title}</h2><p>{sub}</p></div><img src={asset(img)} alt="貓咪水彩插畫"/>{children}</section>}
 function Field({label,name,type="number",step,children}:{label:string;name:string;type?:string;step?:string;children?:React.ReactNode}){return <label><span>{label}</span>{children||<input name={name} type={type} step={step}/>}</label>}
 const Submit=()=> <button className="primary" type="submit">收進貓咪日記</button>;
 function symptomSummary(rows:Entry[]){
@@ -386,7 +387,7 @@ function Food({entries,profile,save}:{entries:Entry[];profile:ProfileData;save:S
   const [db,setDb]=useState<FoodDb|null>(null),[dbFailed,setDbFailed]=useState(false);
   const [name,setName]=useState(""),[picked,setPicked]=useState<FoodRow|null>(null),[amount,setAmount]=useState(100),[manualKcal,setManualKcal]=useState("");
   // 資料庫有 200KB，只有進到飲食頁才載入，其他頁面不受影響。
-  useEffect(()=>{fetch("/food-nutrition.json").then(r=>r.ok?r.json():Promise.reject(new Error("no data"))).then((value:FoodDb)=>setDb(value)).catch(()=>setDbFailed(true));},[]);
+  useEffect(()=>{fetch(asset("/food-nutrition.json")).then(r=>r.ok?r.json():Promise.reject(new Error("no data"))).then((value:FoodDb)=>setDb(value)).catch(()=>setDbFailed(true));},[]);
   const matches=useMemo(()=>picked?[]:searchFoods(db,name),[db,name,picked]);
   const scaled=picked?scaleFood(picked,amount):null;
   const today=todayKey(),energy=calorieTotals(entries,today),nutrition=nutritionTotals(entries,today);

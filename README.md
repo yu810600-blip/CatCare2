@@ -32,6 +32,26 @@ npm run dev
 npm run build
 ```
 
+## 兩個版本
+
+| | `app/` 主站 | `docs/` GitHub Pages 版 |
+|---|---|---|
+| 部署 | Cloudflare Workers + D1 | GitHub Pages |
+| 登入 | ChatGPT 帳號 | 無，資料存在瀏覽器 localStorage |
+| 資料 | 跨裝置同步 | 只在該裝置，清除瀏覽器資料就沒了 |
+
+兩邊**共用同一份 React 程式碼**（`app/CatCareApp.tsx`、`app/health.ts`、`app/food-db.ts`、
+`app/globals.css`）。靜態版只在 `static/` 換掉三件事：資料層改用 localStorage、
+`next/link` 換成 hash 路由、登入換成固定的本機使用者。畫面與計算不需要維護兩份。
+
+重新產生 Pages 版：
+
+```bash
+npm run build:pages
+```
+
+輸出到 `docs/`，該資料夾是建置產物，請不要直接編輯。
+
 ## 更新食品營養資料
 
 `public/food-nutrition.json` 由衛生福利部食品藥物管理署的「食品營養成分資料集」轉換而來，
