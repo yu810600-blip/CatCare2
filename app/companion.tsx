@@ -114,10 +114,10 @@ export function CompanionCat({ companion, state, size = 128, className = "" }:
   { companion: Companion; state: CompanionState; size?: number; className?: string }) {
   return (
     <span className={`companion companion-${state} ${className}`} style={{ height: size }} aria-hidden="true">
-      {/* 七張姿勢全部掛在 DOM 上以 opacity 切換，避免換圖時閃白 */}
+      {/* 七張姿勢全部掛在 DOM 上以 opacity 切換（不能 lazy：隱藏的姿勢永遠不會進 viewport） */}
       {STATES.map(pose => (
         <img key={pose} src={poseSrc(companion, pose)} alt="" draggable={false}
-          className={pose === state ? "pose on" : "pose"} style={{ height: size }} loading="lazy" />
+          className={pose === state ? "pose on" : "pose"} style={{ height: size }} />
       ))}
     </span>
   );
