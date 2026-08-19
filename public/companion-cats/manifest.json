@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "states": ["idle", "walking", "exercise", "cheer", "success", "rest", "sleep"],
+  "cats": [
+    {"id": "white", "name": "白貓", "sheet": "sheets/white.png", "poses": "poses/white/{state}.png"},
+    {"id": "tabby", "name": "虎斑貓", "sheet": "sheets/tabby.png", "poses": "poses/tabby/{state}.png"},
+    {"id": "orange", "name": "橘貓", "sheet": "sheets/orange.png", "poses": "poses/orange/{state}.png"},
+    {"id": "calico", "name": "橘白貓", "sheet": "sheets/calico.png", "poses": "poses/calico/{state}.png"},
+    {"id": "box-white", "name": "紙箱白貓", "sheet": "sheets/box-white.png", "poses": "poses/box-white/{state}.png"}
+  ]
+}
