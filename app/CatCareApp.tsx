@@ -11,12 +11,16 @@ import {
 } from "./health";
 import { NUTRIENT_KEYS, NUTRIENT_LABELS, scaleFood, searchFoods, type FoodDb, type FoodRow } from "./food-db";
 import { asset } from "./asset";
+import { CompanionCat, COMPANIONS, companionByPhoto, milestonesDoneCount, useCompanion, type Companion, type CompanionState } from "./companion";
 
 // 登出路徑由平台攔截處理，不是 app 內的頁面，所以維持原生 <a>。
 // eslint-disable-next-line @next/next/no-html-link-for-pages
 const SignOut = ({label}:{label:string}) => <a href="/signout-with-chatgpt?return_to=%2F">{label}</a>;
 
 const RemoveEntry = createContext<(id: number) => void>(() => {});
+
+// 樂觀更新的暫時 id 用負數遞減，永遠不會撞到資料庫的自增正數 id。
+let draftId = -1;
 
 type Save = (category: string, form: HTMLFormElement) => void;
 type SaveData = (category: string, recordedAt: string, data: Data) => void;
@@ -55,7 +59,11 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
   function chooseCat(value:string){ setCat(value); localStorage.setItem("catcare-cat",value); }
   function flash(message:string){ setNotice(message); setTimeout(()=>setNotice(""),2500); }
   async function saveData(category:string,recordedAt:string,data:Data){
-    const draft={id:Date.now(),category,recordedAt,data}; setEntries(a=>[draft,...a]); flash("已收進今日的貓咪日記 ✓");
+    const draft={id:draftId--,category,recordedAt,data};
+    // 小貓的短反應：體重紀錄若讓里程碑往前一格就開心跳，否則揮手鼓勵一下。
+    const reached=category==="body"&&milestonesDoneCount(weightSeries([draft,...entries]),profile)>milestonesDoneCount(weightSeries(entries),profile);
+    companionReact(reached?"success":"cheer");
+    setEntries(a=>[draft,...a]); flash(reached?"達成新的里程碑！小貓為你慶祝 ✓":"已收進今日的貓咪日記 ✓");
     try{
       const r=await fetch("/api/entries",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({category,recordedAt,data})});
       if(r.ok){const v=await r.json();setEntries(a=>a.map(x=>x.id===draft.id?v.entry:x));}
@@ -75,28 +83,32 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
     form.reset(); saveData(category,recordedAt,data);
   }
   const series=weightSeries(entries);
+  // 陪伴小貓：沿用「我的貓咪」的選擇（selectedCompanionCat），依今日狀態決定動作。
+  const companion=companionByPhoto(cat);
+  const todaySummary=taskSummary(todayTasks(entries,todayKey(),nextInjection(entries,todayKey())));
+  const {state:companionState,react:companionReact}=useCompanion(active,todaySummary.allDone);
   return <RemoveEntry.Provider value={removeEntry}><div className="shell"><aside>
     <Link className="brand" href="/"><b>♥</b><span>貓貓輕生活<small>CAT CARE TRACKER</small></span></Link>
     <nav>{NAV.map(([key,label,icon])=><Link key={key} href={key==="home"?"/":`/${key}`} className={active===key?"active":""}><b>{icon}</b>{label}</Link>)}</nav>
-    <div className="aside-cat"><img src={asset(cat)} alt="已選擇的貓咪水彩畫"/><p>今天也有好好照顧自己嗎？</p></div>
+    <div className="aside-cat"><CompanionCat companion={companion} state={companionState} size={84}/><p>今天也有好好照顧自己嗎？</p></div>
     <p className="medical-note">僅供個人紀錄，不取代醫療建議。持續或嚴重不適請立即就醫。</p>
   </aside><main>
     <header><div><p className="eyebrow">MY PRIVATE HEALTH LOG</p><h1>{LABELS[active]}</h1></div><div className="avatar"><label className="cat-picker"><span>我的貓咪</span><select value={cat} onChange={e=>chooseCat(e.target.value)} aria-label="選擇網站貓咪圖片">{CATS.map(([src,name])=><option value={src} key={src}>{name}</option>)}</select></label><div className="account"><Link href="/profile">{profile.displayName||user.displayName}</Link>{local?<span>資料存在此裝置</span>:<SignOut label="登出"/>}</div><img src={asset(cat)} alt="目前選擇的貓咪"/></div></header>
     {notice&&<div className="toast">{notice}</div>}
     <datalist id="brands">{[...new Set(entries.filter(e=>e.category==="food").map(e=>String(e.data.brand||"")).filter(Boolean))].map(x=><option key={x}>{x}</option>)}</datalist>
-    {active==="home"&&<Dashboard entries={entries} profile={profile} series={series} cat={cat}/>}
+    {active==="home"&&<Dashboard entries={entries} profile={profile} series={series} companion={companion} companionState={companionState}/>}
     {active==="body"&&<Body entries={entries} series={series} save={save}/>} {active==="symptoms"&&<Symptoms entries={entries} save={save}/>}
     {active==="food"&&<Food entries={entries} profile={profile} save={save}/>} {active==="water"&&<Water entries={entries} save={save} saveData={saveData}/>}
-    {active==="exercise"&&<Exercise entries={entries} save={save}/>} {active==="injection"&&<Injection entries={entries} save={save}/>}
+    {active==="exercise"&&<Exercise entries={entries} save={save} companion={companion}/>} {active==="injection"&&<Injection entries={entries} save={save}/>}
     {active==="calendar"&&<CalendarPage entries={entries}/>} {active==="insights"&&<Insights entries={entries} profile={profile} series={series}/>}
-    {active==="profile"&&<Profile user={user} profile={profile} setProfile={setProfile} local={local}/>}
+    {active==="profile"&&<Profile user={user} profile={profile} setProfile={setProfile} local={local} cat={cat} chooseCat={chooseCat}/>}
   </main></div></RemoveEntry.Provider>;
 }
 
 /* ---------- 首頁 Dashboard ---------- */
 // 區塊順序＝手機版的資訊優先順序：小貓 → 目前體重 → 距離目標 → 療程進度 → 今日任務 → 趨勢。
 
-function Dashboard({entries,profile,series,cat}:{entries:Entry[];profile:ProfileData;series:WeightPoint[];cat:string}){
+function Dashboard({entries,profile,series,companion,companionState}:{entries:Entry[];profile:ProfileData;series:WeightPoint[];companion:Companion;companionState:CompanionState}){
   const today=todayKey();
   const goal=goalProgress(series,profile);
   const program=programProgress(profile,today);
@@ -111,7 +123,7 @@ function Dashboard({entries,profile,series,cat}:{entries:Entry[];profile:Profile
   const missing=[!goal.hasTarget&&"目標體重",!program.hasStart&&"療程開始日",!program.hasLength&&"預計療程長度"].filter(Boolean) as string[];
   return <>
     <section className="today-hero">
-      <img src={asset(cat)} alt="今天陪伴你的貓咪"/>
+      <CompanionCat companion={companion} state={companionState} size={148} className="hero-cat"/>
       <div>
         <span className="sticker">{formatDate(today)} · 今天也在前進 ♡</span>
         <h2>{goal.hasWeight?<>目前 <em>{goal.current} kg</em></>:<>還沒有體重紀錄</>}</h2>
@@ -304,7 +316,7 @@ function Insights({entries,profile,series}:{entries:Entry[];profile:ProfileData;
 
 /* ---------- 個人資料 ---------- */
 
-function Profile({user,profile,setProfile,local}:{user:User;profile:ProfileData;setProfile:(value:ProfileData)=>void;local:boolean}){
+function Profile({user,profile,setProfile,local,cat,chooseCat}:{user:User;profile:ProfileData;setProfile:(value:ProfileData)=>void;local:boolean;cat:string;chooseCat:(value:string)=>void}){
   const [message,setMessage]=useState("");
   async function submit(e:FormEvent<HTMLFormElement>){
     e.preventDefault();
@@ -325,6 +337,13 @@ function Profile({user,profile,setProfile,local}:{user:User;profile:ProfileData;
       <label><span>初始體重 (kg)</span><input type="number" min="0" step="0.1" value={profile.startWeight||""} placeholder="留空則用第一筆身體數值" onChange={e=>set({startWeight:Number(e.target.value)})}/></label>
       <label><span>目標體重 (kg)</span><input type="number" min="0" step="0.1" value={profile.targetWeight||""} onChange={e=>set({targetWeight:Number(e.target.value)})}/></label>
       <label><span>每日熱量目標 (kcal)</span><input type="number" min="0" value={profile.calorieGoal||""} onChange={e=>set({calorieGoal:Number(e.target.value)})}/></label>
+      <h3>陪伴小貓</h3>
+      <div className="companion-picker">
+        {COMPANIONS.map(option=><button type="button" key={option.id} className={companionByPhoto(cat).id===option.id?"picked":""} onClick={()=>chooseCat(option.photo)} aria-label={`選擇 ${option.name} 當陪伴小貓`} aria-pressed={companionByPhoto(cat).id===option.id}>
+          <CompanionCat companion={option} state="idle" size={72}/><span>{option.name}</span>
+        </button>)}
+      </div>
+      <p className="profile-note">選擇的小貓會出現在總覽頁陪你，完成紀錄時也會有小小的反應。</p>
       <h3>療程設定</h3>
       <label><span>療程開始日</span><input type="date" value={profile.programStart} onChange={e=>set({programStart:e.target.value})}/></label>
       <label><span>預計療程長度 (週)</span><input type="number" min="0" value={profile.programWeeks||""} onChange={e=>set({programWeeks:Number(e.target.value)})}/></label>
@@ -336,7 +355,7 @@ function Profile({user,profile,setProfile,local}:{user:User;profile:ProfileData;
 
 /* ---------- 各項紀錄頁 ---------- */
 
-function Panel({title,sub,img,children}:{title:string;sub:string;img:string;children:React.ReactNode}){return <section className="page-panel"><div className="panel-copy"><p className="eyebrow">DAILY LOG</p><h2>{title}</h2><p>{sub}</p></div><img src={asset(img)} alt="貓咪水彩插畫"/>{children}</section>}
+function Panel({title,sub,img,figure,children}:{title:string;sub:string;img?:string;figure?:React.ReactNode;children:React.ReactNode}){return <section className="page-panel"><div className="panel-copy"><p className="eyebrow">DAILY LOG</p><h2>{title}</h2><p>{sub}</p></div>{figure??(img&&<img src={asset(img)} alt="貓咪水彩插畫"/>)}{children}</section>}
 function Field({label,name,type="number",step,children}:{label:string;name:string;type?:string;step?:string;children?:React.ReactNode}){return <label><span>{label}</span>{children||<input name={name} type={type} step={step}/>}</label>}
 const Submit=()=> <button className="primary" type="submit">收進貓咪日記</button>;
 function symptomSummary(rows:Entry[]){
@@ -450,4 +469,4 @@ function Water({entries,save,saveData}:{entries:Entry[];save:Save;saveData:SaveD
 }
 
 function Injection({entries,save}:{entries:Entry[];save:Save}){const old=entries.filter(e=>e.category==="injection"),meds=[...new Set(old.map(e=>String(e.data.medicine)))],doses=[...new Set(old.map(e=>String(e.data.dose)))];return <><Panel title="施打紀錄與提醒" sub="記下醫療人員已指示的用藥資訊，並輪替施打位置。" img="/cat-orange.jpg"><Form cat="injection" save={save}><Field label="施打日期" name="recordedAt" type="date"/><Field label="藥品" name="medicine"><><input name="medicine" list="meds" placeholder="例：週纖達 Wegovy"/><datalist id="meds">{[...new Set(["週纖達 Wegovy","猛健樂 Mounjaro",...meds])].map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="施打劑量" name="dose"><><input name="dose" list="doses" placeholder="依醫囑輸入"/><datalist id="doses">{doses.map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="施打部位" name="site"><select name="site"><option>右下腹</option><option>左下腹</option><option>右大腿前側</option><option>左大腿前側</option><option>右上臂</option><option>左上臂</option></select></Field><Field label="下次提醒" name="next" type="datetime-local"/></Form></Panel><div className="alert soft">劑量調整只能依處方醫療人員指示，本站不會建議或自動變更劑量。</div><History entries={entries} cat="injection"/></>}
-function Exercise({entries,save}:{entries:Entry[];save:Save}){return <><Panel title="運動與每日消耗" sub="不求快，只求穩穩地把活動放進生活。" img="/cat-box.jpg"><Form cat="exercise" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="運動項目" name="activity"><input name="activity" placeholder="例：快走、重訓"/></Field><Field label="時間 (分鐘)" name="minutes"/><Field label="消耗熱量 (kcal)" name="calories"/><Field label="基礎代謝 BMR (kcal)" name="bmr"/><Field label="當日總消耗 TDEE (kcal)" name="tdee"/></Form></Panel><History entries={entries} cat="exercise"/></>}
+function Exercise({entries,save,companion}:{entries:Entry[];save:Save;companion:Companion}){return <><Panel title="運動與每日消耗" sub="不求快，只求穩穩地把活動放進生活。小貓也一起原地踏步。" figure={<CompanionCat companion={companion} state="exercise" size={230} className="panel-cat"/>}><Form cat="exercise" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="運動項目" name="activity"><input name="activity" placeholder="例：快走、重訓"/></Field><Field label="時間 (分鐘)" name="minutes"/><Field label="消耗熱量 (kcal)" name="calories"/><Field label="基礎代謝 BMR (kcal)" name="bmr"/><Field label="當日總消耗 TDEE (kcal)" name="tdee"/></Form></Panel><History entries={entries} cat="exercise"/></>}

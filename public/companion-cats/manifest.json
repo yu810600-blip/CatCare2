@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "states": [
+    "idle",
+    "walking",
+    "exercise",
+    "cheer",
+    "success",
+    "rest",
+    "sleep"
+  ],
+  "cats": [
+    {
+      "id": "white",
+      "name": "白貓",
+      "poses": "poses/white/{state}.png"
+    },
+    {
+      "id": "tabby",
+      "name": "虎斑貓",
+      "poses": "poses/tabby/{state}.png"
+    },
+    {
+      "id": "orange",
+      "name": "橘貓",
+      "poses": "poses/orange/{state}.png"
+    },
+    {
+      "id": "calico",
+      "name": "橘白貓",
+      "poses": "poses/calico/{state}.png"
+    },
+    {
+      "id": "box-white",
+      "name": "紙箱白貓",
+      "poses": "poses/box-white/{state}.png"
+    }
+  ],
+  "note": "原始 4x2 圖集保存在 repo 的 artwork/companion-sheets/，部署產物只帶單張 poses。"
+}
