@@ -3,7 +3,7 @@ import { getDb } from "../../../db";
 import { entries } from "../../../db/schema";
 import { getChatGPTUser } from "../../chatgpt-auth";
 
-const allowed = new Set(["body", "symptoms", "food", "injection", "exercise", "water"]);
+const allowed = new Set(["body", "symptoms", "food", "injection", "exercise", "water", "supplement"]);
 
 export async function GET() {
   try {

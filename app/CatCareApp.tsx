@@ -26,15 +26,36 @@ type Save = (category: string, form: HTMLFormElement) => void;
 type SaveData = (category: string, recordedAt: string, data: Data) => void;
 type User = { userId: string; displayName: string; email: string; fullName: string | null };
 
+// 每個 section 仍保有自己的路由（舊連結與 PWA 捷徑不會失效），但導覽收斂成五個分頁。
+const LABELS: Record<string, string> = {
+  home: "健康總覽", body: "身體數值", food: "飲食熱量", water: "飲水紀錄",
+  supplement: "營養補充", exercise: "運動消耗", injection: "施打紀錄",
+  symptoms: "生理狀況", calendar: "月曆紀錄", insights: "統計與目標", profile: "個人資料",
+};
 const NAV = [
-  ["home", "健康總覽", "⌂"], ["body", "身體數值", "◌"], ["symptoms", "生理狀況", "♡"],
-  ["food", "飲食熱量", "◇"], ["water", "飲水紀錄", "◒"], ["exercise", "運動消耗", "△"],
-  ["injection", "施打紀錄", "+"], ["calendar", "月曆紀錄", "▦"], ["insights", "統計與目標", "◆"],
-  ["profile", "個人資料", "♙"],
+  ["home", "健康總覽", "/"], ["daily", "每日紀錄", "/body"], ["care", "療程紀錄", "/injection"],
+  ["review", "歷史統計", "/calendar"], ["profile", "個人資料", "/profile"],
 ] as const;
-const RECORDS = ["body", "symptoms", "food", "water", "exercise", "injection"] as const;
+// section → 所屬分頁（決定導覽的 active 樣式與顯示哪組子頁籤）
+const PAGE_OF: Record<string, string> = {
+  home: "home", body: "daily", food: "daily", water: "daily", supplement: "daily", exercise: "daily",
+  injection: "care", symptoms: "care", calendar: "review", insights: "review", profile: "profile",
+};
+const SUBTABS: Record<string, readonly (readonly [string, string])[]> = {
+  daily: [["body", "身體數值"], ["food", "飲食"], ["water", "飲水"], ["supplement", "營養品"], ["exercise", "運動"]],
+  care: [["injection", "施打"], ["symptoms", "生理狀況"]],
+  review: [["calendar", "月曆"], ["insights", "統計與目標"]],
+};
+const NAV_ICONS: Record<string, React.ReactNode> = {
+  home: <svg viewBox="0 0 24 24"><path d="M3.5 10.8 12 3.6l8.5 7.2"/><path d="M5.5 9.5V20a1 1 0 0 0 1 1H9.8v-5.6a2.2 2.2 0 0 1 4.4 0V21h3.3a1 1 0 0 0 1-1V9.5"/></svg>,
+  daily: <svg viewBox="0 0 24 24"><path d="M16.8 3.7 20.3 7.2 8.5 19 4.4 19.9 5.3 15.8Z"/><path d="M14.3 6.2l3.5 3.5"/><path d="M12 21h8.5"/></svg>,
+  care: <svg viewBox="0 0 24 24"><path d="M12 20.4C7.7 16.6 4 13.7 4 10.2 4 7.8 5.8 6 8.1 6c1.5 0 2.9.8 3.9 2.2C13 6.8 14.4 6 15.9 6 18.2 6 20 7.8 20 10.2c0 3.5-3.7 6.4-8 10.2Z"/><path d="M7.6 11.6h2.5l1.2-2.3 1.6 4 1.2-2.3h2.3"/></svg>,
+  review: <svg viewBox="0 0 24 24"><path d="M4.5 20.5h15"/><path d="M6.5 20V11.5"/><path d="M12 20V4.5"/><path d="M17.5 20v-6"/></svg>,
+  profile: <svg viewBox="0 0 24 24"><circle cx="12" cy="8.2" r="3.9"/><path d="M4.6 20.6c.8-3.6 3.8-5.6 7.4-5.6s6.6 2 7.4 5.6"/></svg>,
+};
+const RECORDS = ["body", "symptoms", "food", "water", "supplement", "exercise", "injection"] as const;
 type Record0 = typeof RECORDS[number];
-const LABELS = Object.fromEntries(NAV.map(([key, label]) => [key, label])) as Record<string, string>;
+const RECORD_GLYPHS: Record<Record0, string> = { body: "◌", symptoms: "♡", food: "◇", water: "◒", supplement: "✽", exercise: "△", injection: "+" };
 const DRINKS = ["白開水", "無糖茶", "黑咖啡", "氣泡水", "湯品"] as const;
 const CATS = [
   ["/cat-white.jpg", "白貓"], ["/cat-tabby.jpg", "虎斑貓"], ["/cat-orange.jpg", "橘貓"],
@@ -45,7 +66,8 @@ const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"] as const;
 const QUICK_WATER = [250, 500, 750] as const;
 
 export default function CatCareApp({section,user,local=false}:{section:string;user:User;local?:boolean}) {
-  const active = NAV.some(x=>x[0]===section) ? section : "home";
+  const active = section in PAGE_OF ? section : "home";
+  const page = PAGE_OF[active];
   const [entries,setEntries] = useState<Entry[]>([]);
   const [profile,setProfile] = useState<ProfileData>({...EMPTY_PROFILE,email:user.email,displayName:user.displayName});
   const [notice,setNotice] = useState("");
@@ -89,16 +111,19 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
   const {state:companionState,react:companionReact}=useCompanion(active,todaySummary.allDone);
   return <RemoveEntry.Provider value={removeEntry}><div className="shell"><aside>
     <Link className="brand" href="/"><b>♥</b><span>貓貓輕生活<small>CAT CARE TRACKER</small></span></Link>
-    <nav>{NAV.map(([key,label,icon])=><Link key={key} href={key==="home"?"/":`/${key}`} className={active===key?"active":""}><b>{icon}</b>{label}</Link>)}</nav>
+    <nav>{NAV.map(([key,label,href])=><Link key={key} href={href} className={page===key?"active":""}><b>{NAV_ICONS[key]}</b>{label}</Link>)}</nav>
     <div className="aside-cat"><CompanionCat companion={companion} state={companionState} size={84}/><p>今天也有好好照顧自己嗎？</p></div>
     <p className="medical-note">僅供個人紀錄，不取代醫療建議。持續或嚴重不適請立即就醫。</p>
   </aside><main>
     <header><div><p className="eyebrow">MY PRIVATE HEALTH LOG</p><h1>{LABELS[active]}</h1></div><div className="avatar"><label className="cat-picker"><span>我的貓咪</span><select value={cat} onChange={e=>chooseCat(e.target.value)} aria-label="選擇網站貓咪圖片">{CATS.map(([src,name])=><option value={src} key={src}>{name}</option>)}</select></label><div className="account"><Link href="/profile">{profile.displayName||user.displayName}</Link>{local?<span>資料存在此裝置</span>:<SignOut label="登出"/>}</div><img src={asset(cat)} alt="目前選擇的貓咪"/></div></header>
+    {SUBTABS[page]&&<div className="subtabs" role="navigation" aria-label="分頁內切換">{SUBTABS[page].map(([key,label])=><Link key={key} href={`/${key}`} className={active===key?"on":""}>{label}</Link>)}</div>}
     {notice&&<div className="toast">{notice}</div>}
+    {active!=="home"&&<div className="floating-companion"><CompanionCat companion={companion} state={companionState} size={62}/></div>}
     <datalist id="brands">{[...new Set(entries.filter(e=>e.category==="food").map(e=>String(e.data.brand||"")).filter(Boolean))].map(x=><option key={x}>{x}</option>)}</datalist>
     {active==="home"&&<Dashboard entries={entries} profile={profile} series={series} companion={companion} companionState={companionState}/>}
     {active==="body"&&<Body entries={entries} series={series} save={save}/>} {active==="symptoms"&&<Symptoms entries={entries} save={save}/>}
     {active==="food"&&<Food entries={entries} profile={profile} save={save}/>} {active==="water"&&<Water entries={entries} save={save} saveData={saveData}/>}
+    {active==="supplement"&&<Supplement entries={entries} save={save}/>}
     {active==="exercise"&&<Exercise entries={entries} save={save} companion={companion}/>} {active==="injection"&&<Injection entries={entries} save={save}/>}
     {active==="calendar"&&<CalendarPage entries={entries}/>} {active==="insights"&&<Insights entries={entries} profile={profile} series={series}/>}
     {active==="profile"&&<Profile user={user} profile={profile} setProfile={setProfile} local={local} cat={cat} chooseCat={chooseCat}/>}
@@ -165,7 +190,7 @@ function Dashboard({entries,profile,series,companion,companionState}:{entries:En
             <div><dt>開始日</dt><dd>{formatDate(program.start)}</dd></div>
             <div><dt>預計結束</dt><dd>{program.end?formatDate(program.end):"未設定長度"}</dd></div>
             <div><dt>預估剩餘</dt><dd>{program.hasLength?`${program.daysRemaining} 天（約 ${program.weeksRemaining} 週）`:"未設定長度"}</dd></div>
-            <div><dt>下次施打</dt><dd>{injection?<>{formatDate(injection.dateKey)}{injection.daysAway!==null&&<small>{injection.overdue?`已過 ${Math.abs(injection.daysAway)} 天`:injection.daysAway===0?"就是今天":`還有 ${injection.daysAway} 天`}</small>}</>:"尚未設定"}</dd></div>
+            <div><dt>下次施打</dt><dd>{injection?<>{formatDate(injection.dateKey)}{injection.inferred&&<i className="inferred">依上次施打推算</i>}{injection.daysAway!==null&&<small>{injection.overdue?`已過 ${Math.abs(injection.daysAway)} 天`:injection.daysAway===0?"就是今天":`還有 ${injection.daysAway} 天`}</small>}</>:"尚未設定"}</dd></div>
           </dl>
         </>:<p className="empty">在個人資料填入療程開始日與預計長度，這裡會自動算出第幾天、第幾週與剩餘時間。</p>}
       </div>
@@ -193,7 +218,7 @@ function Dashboard({entries,profile,series,companion,companionState}:{entries:En
       </div>
     </section>
 
-    <section className="quick"><h3>快速補記</h3><div>{NAV.filter(([k])=>RECORDS.includes(k as Record0)).map(([k,l,i])=><Link href={`/${k}`} key={k}><b>{i}</b>{l}<span>→</span></Link>)}</div></section>
+    <section className="quick"><h3>快速補記</h3><div>{RECORDS.map(k=><Link href={`/${k}`} key={k}><b>{RECORD_GLYPHS[k]}</b>{LABELS[k]}<span>→</span></Link>)}</div></section>
   </>;
 }
 
@@ -467,6 +492,12 @@ function Water({entries,save,saveData}:{entries:Entry[];save:Save;saveData:SaveD
     </div>
     <History entries={entries} cat="water"/></>;
 }
+
+function Supplement({entries,save}:{entries:Entry[];save:Save}){
+  const old=entries.filter(e=>e.category==="supplement");
+  const names=[...new Set(old.map(e=>String(e.data.name)).filter(Boolean))];
+  const doses=[...new Set(old.map(e=>String(e.data.dose)).filter(Boolean))];
+  return <><Panel title="營養補充" sub="維他命、蛋白粉或醫師建議的補充品，吃了就順手記一筆。" img="/cat-orange.jpg"><Form cat="supplement" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="品名" name="name"><><input name="name" list="supplement-names" placeholder="例：綜合維他命、乳清蛋白"/><datalist id="supplement-names">{names.map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="劑量／數量" name="dose"><><input name="dose" list="supplement-doses" placeholder="例：1 顆、20 g"/><datalist id="supplement-doses">{doses.map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="備註" name="notes"><input name="notes" placeholder="飯後、睡前…"/></Field></Form></Panel><div className="alert soft">補充品與處方藥的交互作用請先與醫療人員或藥師確認，本站僅做個人紀錄。</div><History entries={entries} cat="supplement"/></>}
 
 function Injection({entries,save}:{entries:Entry[];save:Save}){const old=entries.filter(e=>e.category==="injection"),meds=[...new Set(old.map(e=>String(e.data.medicine)))],doses=[...new Set(old.map(e=>String(e.data.dose)))];return <><Panel title="施打紀錄與提醒" sub="記下醫療人員已指示的用藥資訊，並輪替施打位置。" img="/cat-orange.jpg"><Form cat="injection" save={save}><Field label="施打日期" name="recordedAt" type="date"/><Field label="藥品" name="medicine"><><input name="medicine" list="meds" placeholder="例：週纖達 Wegovy"/><datalist id="meds">{[...new Set(["週纖達 Wegovy","猛健樂 Mounjaro",...meds])].map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="施打劑量" name="dose"><><input name="dose" list="doses" placeholder="依醫囑輸入"/><datalist id="doses">{doses.map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="施打部位" name="site"><select name="site"><option>右下腹</option><option>左下腹</option><option>右大腿前側</option><option>左大腿前側</option><option>右上臂</option><option>左上臂</option></select></Field><Field label="下次提醒" name="next" type="datetime-local"/></Form></Panel><div className="alert soft">劑量調整只能依處方醫療人員指示，本站不會建議或自動變更劑量。</div><History entries={entries} cat="injection"/></>}
 function Exercise({entries,save,companion}:{entries:Entry[];save:Save;companion:Companion}){return <><Panel title="運動與每日消耗" sub="不求快，只求穩穩地把活動放進生活。小貓也一起原地踏步。" figure={<CompanionCat companion={companion} state="exercise" size={230} className="panel-cat"/>}><Form cat="exercise" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="運動項目" name="activity"><input name="activity" placeholder="例：快走、重訓"/></Field><Field label="時間 (分鐘)" name="minutes"/><Field label="消耗熱量 (kcal)" name="calories"/><Field label="基礎代謝 BMR (kcal)" name="bmr"/><Field label="當日總消耗 TDEE (kcal)" name="tdee"/></Form></Panel><History entries={entries} cat="exercise"/></>}

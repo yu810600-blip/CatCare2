@@ -143,12 +143,16 @@ export function programProgress(profile: ProfileData, today: string): ProgramPro
 
 export type NextInjection = {
   at: string; dateKey: string; medicine: string; dose: string;
-  daysAway: number | null; overdue: boolean;
+  daysAway: number | null; overdue: boolean; inferred: boolean;
 };
 
+export const INJECTION_INTERVAL_DAYS = 7;
+
 export function nextInjection(entries: Entry[], today: string): NextInjection | null {
-  const planned = entries
-    .filter(e => e.category === "injection" && String(e.data.next || "").trim())
+  const shots = entries.filter(e => e.category === "injection");
+  if (!shots.length) return null;
+  const planned = shots
+    .filter(e => String(e.data.next || "").trim())
     .map(e => {
       const at = String(e.data.next);
       return {
@@ -159,11 +163,19 @@ export function nextInjection(entries: Entry[], today: string): NextInjection | 
     })
     .filter(x => parseDateKey(x.dateKey) !== null)
     .sort((a, b) => a.at.localeCompare(b.at));
-  if (!planned.length) return null;
-  // 優先顯示還沒到的那次；全部都過期了就顯示最後一次並標為逾期。
-  const upcoming = planned.find(x => x.dateKey >= today) ?? planned[planned.length - 1];
-  const daysAway = diffDays(today, upcoming.dateKey);
-  return { ...upcoming, daysAway, overdue: upcoming.dateKey < today };
+  // 明確填的提醒優先（取還沒到的最近一次）。
+  const upcoming = planned.find(x => x.dateKey >= today);
+  if (upcoming) return { ...upcoming, daysAway: diffDays(today, upcoming.dateKey), overdue: false, inferred: false };
+  // 沒填或都過期時，依「每 7 日施打一次」從最後一次施打推算。
+  const last = [...shots].sort((a, b) => a.recordedAt.localeCompare(b.recordedAt)).at(-1)!;
+  const dateKey = shiftDays(last.recordedAt, INJECTION_INTERVAL_DAYS);
+  if (!dateKey) return null;
+  return {
+    at: dateKey, dateKey,
+    medicine: String(last.data.medicine || "尚未填寫"),
+    dose: String(last.data.dose || ""),
+    daysAway: diffDays(today, dateKey), overdue: dateKey < today, inferred: true,
+  };
 }
 
 /* ---------- 趨勢 ---------- */
@@ -213,13 +225,13 @@ export function todayTasks(entries: Entry[], today: string, injection: NextInjec
   const has = (category: string) => entries.some(e => e.category === category && e.recordedAt === today);
   const water = waterTotal(entries, today);
   const injectedToday = has("injection");
-  // 施打通常是每週一次，不是今天排定就不算未完成的任務。
-  const injectionDue = !injection || injection.dateKey <= today;
+  // 施打是每 7 天一次：只有到期（今天或已逾期）才算待辦，平常日子不出現提醒。
+  const injectionDue = injection !== null && injection.dateKey <= today;
   const injectionHint = injectedToday ? "已記錄"
-    : !injection ? "還沒有療程紀錄"
+    : !injection ? "還沒有施打紀錄"
     : injection.dateKey === today ? "今天是施打日"
     : injection.dateKey < today ? `預定 ${formatDate(injection.dateKey)} 已過`
-    : `下次 ${formatDate(injection.dateKey)}`;
+    : `下次 ${formatDate(injection.dateKey)}${injection.inferred ? "（推算）" : ""}`;
   return [
     { key: "body", label: "今日體重", href: "/body", state: has("body") ? "done" : "todo", hint: has("body") ? "已記錄" : "還沒量" },
     { key: "food", label: "今日飲食", href: "/food", state: has("food") ? "done" : "todo", hint: has("food") ? "已記錄" : "還沒記" },
@@ -269,6 +281,7 @@ const FIELD_LABELS: Record<string, FieldMeta> = {
   waist: { label: "腰圍", unit: "cm" }, chest: { label: "胸圍", unit: "cm" },
   muscle: { label: "肌肉量", unit: "kg" }, machine: { label: "機器" },
   food: { label: "食物" }, amount: { label: "份量", unit: "g" },
+  name: { label: "品名" },
   calories: { label: "熱量", unit: "kcal" }, brand: { label: "品牌" },
   protein: { label: "蛋白質", unit: "g" }, totalFat: { label: "脂肪", unit: "g" },
   saturated: { label: "飽和脂肪", unit: "g" }, carb: { label: "碳水", unit: "g" },
