@@ -383,9 +383,11 @@ const CATEGORY_LABELS: Record<string, Record<string, FieldMeta>> = {
 };
 
 /** 把一筆紀錄轉成「標籤 值 單位」的字串，取代原本只列出裸數字的做法。 */
+const HIDDEN_FIELDS = new Set(["source", "externalId"]);
+
 export function describeEntry(entry: Entry): string[] {
   return Object.entries(entry.data)
-    .filter(([, value]) => String(value).trim() !== "")
+    .filter(([key, value]) => !HIDDEN_FIELDS.has(key) && String(value).trim() !== "")
     .map(([key, value]) => {
       const meta = CATEGORY_LABELS[entry.category]?.[key] ?? FIELD_LABELS[key];
       const text = key === "next" ? String(value).replace("T", " ")

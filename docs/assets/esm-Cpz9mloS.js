@@ -1,0 +1,1 @@
+import{registerPlugin as e}from"./dist-DEljLEHw.js";var t=e(`HealthPlugin`,{});export{t as Health};

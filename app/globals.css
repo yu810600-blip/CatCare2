@@ -54,6 +54,7 @@ nav a b svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.
 .trend-chart .shot-dot{fill:#f3d58a;stroke:#d9a83f;stroke-width:1.5;cursor:pointer}.trend-chart .shot-dot.on{fill:#d07992;stroke:#b8607a}
 .chart-ticks{display:flex;justify-content:space-between;color:#a29ca3;font-size:9px;padding:0 6px}
 .shot-note{margin:8px 0 0;font-size:11px;color:#8f8894}
+.health-sync-actions{grid-column:1/-1;display:flex;align-items:center;gap:12px;flex-wrap:wrap}.health-sync-actions button:not(.primary){border:1px solid #ded5dc;background:white;border-radius:12px;padding:11px 18px;font-size:13px;font-weight:800;color:#6e6873}.health-sync-actions span{font-size:12px;color:#5f927b;font-weight:800}
 .share-card{margin-top:16px}.share-actions{display:flex;align-items:center;gap:14px;margin-top:12px}.share-actions span{font-size:12px;color:#5f927b;font-weight:800}
 
 @media(max-width:1050px){.shell{grid-template-columns:85px 1fr}aside{padding:25px 12px}.brand span,nav a{font-size:0}.brand{justify-content:center}.brand>b{flex:none}nav a{justify-content:center;padding:12px}.aside-cat,.medical-note{display:none}main{padding:25px}.floating-companion{bottom:calc(14px + env(safe-area-inset-bottom))}.metrics{grid-template-columns:repeat(2,1fr)}.quick>div{grid-template-columns:repeat(3,1fr)}}

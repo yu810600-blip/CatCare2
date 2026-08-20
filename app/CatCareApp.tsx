@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { createContext, FormEvent, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, FormEvent, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   bmi, bmiLabel, calorieTotals, dayTotals, EMPTY_PROFILE, formatDate, goalProgress, milestones,
   monthMatrix, nextInjection, programProgress, symptomStats, taskSummary, todayKey,
@@ -13,6 +13,7 @@ import {
 import { NUTRIENT_KEYS, NUTRIENT_LABELS, scaleFood, searchFoods, type FoodDb, type FoodRow } from "./food-db";
 import { asset } from "./asset";
 import { syncInjectionReminders } from "./notifications";
+import { connectAppleHealth, fetchHealthEntries, isHealthSyncAvailable } from "./health-sync";
 import { CompanionCat, COMPANIONS, companionByPhoto, milestonesDoneCount, poseSrc, useCompanion, type Companion, type CompanionState } from "./companion";
 
 // 登出路徑由平台攔截處理，不是 app 內的頁面，所以維持原生 <a>。
@@ -71,6 +72,8 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
   const active = section in PAGE_OF ? section : "home";
   const page = PAGE_OF[active];
   const [entries,setEntries] = useState<Entry[]>([]);
+  const entriesRef=useRef<Entry[]>([]);
+  entriesRef.current=entries;
   const [profile,setProfile] = useState<ProfileData>({...EMPTY_PROFILE,email:user.email,displayName:user.displayName});
   const [notice,setNotice] = useState("");
   const [cat,setCat] = useState<string>(CATS[0][0]);
@@ -82,6 +85,25 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
   useEffect(()=>{ if("serviceWorker" in navigator) navigator.serviceWorker.register(asset("/sw.js")).catch(()=>{}); },[]);
   // iOS App：依下次施打日排本機通知（前一天 20:00 與當天 09:00）；網頁版不生效。
   useEffect(()=>{ syncInjectionReminders(entries); },[entries]);
+  // iOS App：啟動時自動把 Apple 健康（含 Garmin 同步進來的）最近 7 天資料帶入。
+  const [healthReady,setHealthReady]=useState(false);
+  const healthSyncedOnce=useRef(false);
+  useEffect(()=>{ isHealthSyncAvailable().then(setHealthReady); },[]);
+  const importHealth=useCallback(async(silent:boolean)=>{
+    try{
+      const additions=await fetchHealthEntries(entriesRef.current);
+      for(const item of additions){
+        await fetch("/api/entries",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(item)});
+      }
+      if(additions.length){
+        const r=await fetch("/api/entries"); if(r.ok){const v=await r.json(); if(v?.entries) setEntries(v.entries);}
+      }
+      if(!silent) flash(additions.length?`已從 Apple 健康帶入 ${additions.length} 筆資料 ✓`:"沒有新的健康資料");
+      localStorage.setItem("catcare-health-synced",todayKey());
+      return additions.length;
+    }catch{ if(!silent) flash("同步失敗，請稍後再試"); return 0; }
+  },[]);
+  useEffect(()=>{ if(healthReady&&!healthSyncedOnce.current){ healthSyncedOnce.current=true; importHealth(true); } },[healthReady,importHealth]);
   function chooseCat(value:string){ setCat(value); localStorage.setItem("catcare-cat",value); }
   function flash(message:string){ setNotice(message); setTimeout(()=>setNotice(""),2500); }
   async function saveData(category:string,recordedAt:string,data:Data){
@@ -130,7 +152,8 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
     {active==="supplement"&&<Supplement entries={entries} save={save}/>} {active==="expense"&&<Expense entries={entries} save={save}/>}
     {active==="exercise"&&<Exercise entries={entries} save={save} companion={companion}/>} {active==="injection"&&<Injection entries={entries} save={save}/>}
     {active==="calendar"&&<CalendarPage entries={entries}/>} {active==="insights"&&<Insights entries={entries} profile={profile} series={series} companion={companion}/>}
-    {active==="profile"&&<Profile user={user} profile={profile} setProfile={setProfile} local={local} cat={cat} chooseCat={chooseCat}/>}
+    {active==="profile"&&<Profile user={user} profile={profile} setProfile={setProfile} local={local} cat={cat} chooseCat={chooseCat}
+      healthSync={healthReady?<HealthSyncSection importHealth={importHealth}/>:undefined}/>}
   </main></div></RemoveEntry.Provider>;
 }
 
@@ -401,6 +424,30 @@ function Insights({entries,profile,series,companion}:{entries:Entry[];profile:Pr
   </>;
 }
 
+/* ---------- Apple 健康同步（iOS App 限定） ---------- */
+
+function HealthSyncSection({importHealth}:{importHealth:(silent:boolean)=>Promise<number>}){
+  const [busy,setBusy]=useState(false),[message,setMessage]=useState("");
+  const lastSync=typeof window!=="undefined"?localStorage.getItem("catcare-health-synced"):null;
+  async function connect(){
+    setBusy(true);setMessage("");
+    const ok=await connectAppleHealth();
+    if(ok){ await importHealth(false); setMessage("已連結，之後每次開啟 App 會自動同步最近 7 天"); }
+    else setMessage("無法連結 Apple 健康");
+    setBusy(false);
+  }
+  async function syncNow(){ setBusy(true); await importHealth(false); setBusy(false); }
+  return <>
+    <h3>健康資料同步</h3>
+    <p className="profile-note">從 Apple「健康」帶入體重、體脂、瘦體重與運動（Garmin Connect 同步進健康的資料也包含在內）。匯入的紀錄會標記來源，不會蓋掉你手動輸入的資料。{lastSync&&` 上次同步：${lastSync}。`}</p>
+    <div className="health-sync-actions">
+      <button type="button" className="primary" onClick={connect} disabled={busy}>{busy?"處理中…":"連結 Apple 健康"}</button>
+      <button type="button" onClick={syncNow} disabled={busy}>立即同步</button>
+      {message&&<span>{message}</span>}
+    </div>
+  </>;
+}
+
 /* ---------- 成果分享卡 ---------- */
 
 function ShareCard({goal,program,marksDone,companion}:{goal:GoalProgress;program:ProgramProgress;marksDone:number;companion:Companion}){
@@ -471,7 +518,7 @@ function ShareCard({goal,program,marksDone,companion}:{goal:GoalProgress;program
 
 /* ---------- 個人資料 ---------- */
 
-function Profile({user,profile,setProfile,local,cat,chooseCat}:{user:User;profile:ProfileData;setProfile:(value:ProfileData)=>void;local:boolean;cat:string;chooseCat:(value:string)=>void}){
+function Profile({user,profile,setProfile,local,cat,chooseCat,healthSync}:{user:User;profile:ProfileData;setProfile:(value:ProfileData)=>void;local:boolean;cat:string;chooseCat:(value:string)=>void;healthSync?:React.ReactNode}){
   const [message,setMessage]=useState("");
   async function submit(e:FormEvent<HTMLFormElement>){
     e.preventDefault();
@@ -499,6 +546,7 @@ function Profile({user,profile,setProfile,local,cat,chooseCat}:{user:User;profil
         </button>)}
       </div>
       <p className="profile-note">選擇的小貓會出現在總覽頁陪你，完成紀錄時也會有小小的反應。</p>
+      {healthSync}
       <h3>療程設定</h3>
       <label><span>療程開始日</span><input type="date" value={profile.programStart} onChange={e=>set({programStart:e.target.value})}/></label>
       <label><span>預計療程長度 (週)</span><input type="number" min="0" value={profile.programWeeks||""} onChange={e=>set({programWeeks:Number(e.target.value)})}/></label>

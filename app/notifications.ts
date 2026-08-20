@@ -18,17 +18,24 @@ export async function syncInjectionReminders(entries: Entry[]): Promise<void> {
     if (!Capacitor.isNativePlatform()) return;
     const { LocalNotifications } = await import("@capacitor/local-notifications");
 
-    let granted = (await LocalNotifications.checkPermissions()).display === "granted";
-    if (!granted) granted = (await LocalNotifications.requestPermissions()).display === "granted";
+    const next = nextInjection(entries, todayKey());
+    const date = next && !next.overdue ? parseDateKey(next.dateKey) : null;
+
+    // 授權狀態還沒問過（prompt）時，除非真的有提醒要排，否則完全不接觸
+    // 通知中心——這個 iOS 版本上連 getPending 都會讓系統補跳授權彈窗。
+    const status = (await LocalNotifications.checkPermissions()).display;
+    if (status === "prompt" && (!next || !date)) return;
+    if (status === "denied") return;
+
+    let granted = status === "granted";
+    if (!granted && next && date) granted = (await LocalNotifications.requestPermissions()).display === "granted";
+    if (!granted) return;
 
     // 重排前一律清掉舊的排程，避免日期改動後留下重複提醒。
     const pending = await LocalNotifications.getPending();
     const stale = pending.notifications.filter(item => REMINDER_IDS.includes(item.id));
     if (stale.length) await LocalNotifications.cancel({ notifications: stale.map(item => ({ id: item.id })) });
 
-    if (!granted) return;
-    const next = nextInjection(entries, todayKey());
-    const date = next && !next.overdue ? parseDateKey(next.dateKey) : null;
     if (!next || !date) return;
 
     const evening = new Date(date);

@@ -18,6 +18,8 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>用來讀取健康 App 中的體重、體脂、瘦體重與運動紀錄（包含 Garmin Connect 同步的資料），帶入你的健康日記。</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
