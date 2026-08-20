@@ -12,6 +12,7 @@ import {
 } from "./health";
 import { NUTRIENT_KEYS, NUTRIENT_LABELS, scaleFood, searchFoods, type FoodDb, type FoodRow } from "./food-db";
 import { asset } from "./asset";
+import { syncInjectionReminders } from "./notifications";
 import { CompanionCat, COMPANIONS, companionByPhoto, milestonesDoneCount, poseSrc, useCompanion, type Companion, type CompanionState } from "./companion";
 
 // 登出路徑由平台攔截處理，不是 app 內的頁面，所以維持原生 <a>。
@@ -79,6 +80,8 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
   useEffect(()=>{ const saved=localStorage.getItem("catcare-cat"); if(saved&&CATS.some(x=>x[0]===saved)) setCat(saved); },[]);
   // 註冊 service worker，手機才能「加到主畫面」並在離線時看到說明頁。
   useEffect(()=>{ if("serviceWorker" in navigator) navigator.serviceWorker.register(asset("/sw.js")).catch(()=>{}); },[]);
+  // iOS App：依下次施打日排本機通知（前一天 20:00 與當天 09:00）；網頁版不生效。
+  useEffect(()=>{ syncInjectionReminders(entries); },[entries]);
   function chooseCat(value:string){ setCat(value); localStorage.setItem("catcare-cat",value); }
   function flash(message:string){ setNotice(message); setTimeout(()=>setNotice(""),2500); }
   async function saveData(category:string,recordedAt:string,data:Data){
