@@ -31,6 +31,23 @@ export async function POST(request: Request) {
   }
 }
 
+export async function PATCH(request: Request) {
+  try {
+    const user = await getChatGPTUser();
+    if (!user) return Response.json({ error: "請先登入" }, { status: 401 });
+    const id = Number(new URL(request.url).searchParams.get("id"));
+    if (!Number.isInteger(id) || id <= 0) return Response.json({ error: "缺少紀錄編號" }, { status: 400 });
+    const payload = await request.json() as { data?: Record<string, string | number> };
+    if (!payload.data || typeof payload.data !== "object") return Response.json({ error: "資料不完整" }, { status: 400 });
+    // 同樣要比對 userId，避免更新到別人的紀錄
+    const [entry] = await getDb().update(entries).set({ data: payload.data }).where(and(eq(entries.id, id), eq(entries.userId, user.userId))).returning();
+    if (!entry) return Response.json({ error: "找不到這筆紀錄" }, { status: 404 });
+    return Response.json({ entry });
+  } catch {
+    return Response.json({ error: "暫時無法更新" }, { status: 500 });
+  }
+}
+
 export async function DELETE(request: Request) {
   try {
     const user = await getChatGPTUser();

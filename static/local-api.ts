@@ -52,6 +52,14 @@ export function installLocalApi() {
         write(ENTRY_KEY, [...entries, entry]);
         return json({ entry }, 201);
       }
+      if (method === "PATCH") {
+        const id = Number(searchParams.get("id"));
+        const row = entries.find(entry => entry.id === id);
+        if (!row) return json({ error: "找不到這筆紀錄" }, 404);
+        row.data = body?.data ?? row.data;
+        write(ENTRY_KEY, entries);
+        return json({ entry: row });
+      }
       if (method === "DELETE") {
         const id = Number(searchParams.get("id"));
         const kept = entries.filter(row => row.id !== id);

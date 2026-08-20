@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  dosePresets, injectionStats, INJECTION_SITES, nextInjection,
+  dosePresets, injectionStats, INJECTION_SITES, mergeDayData, nextInjection,
   parseDoseMg, siteRotation, type Entry,
 } from "../app/health.ts";
 
@@ -79,4 +79,50 @@ test("nextInjection 明確填的提醒優先於推算", () => {
   const next = nextInjection([shot("2026-08-10", { dose: 0.5, next: "2026-08-18T21:00" })], "2026-08-12");
   assert.equal(next?.dateKey, "2026-08-18");
   assert.equal(next?.inferred, false);
+});
+
+test("mergeDayData 飲水量相加、種類串接去重", () => {
+  const merged = mergeDayData("water", { amount: 500, kind: "白開水" }, { amount: 250, kind: "無糖茶" });
+  assert.deepEqual(merged, { amount: 750, kind: "白開水、無糖茶" });
+  const again = mergeDayData("water", merged, { amount: 250, kind: "白開水" });
+  assert.equal(again.amount, 1000);
+  assert.equal(again.kind, "白開水、無糖茶");
+});
+
+test("mergeDayData 飲食熱量與營養素相加、品名串接", () => {
+  const merged = mergeDayData("food",
+    { food: "地瓜", amount: 200, calories: 230, carb: 55 },
+    { food: "舒肥雞胸", amount: 150, calories: 248, protein: 34 });
+  assert.equal(merged.food, "地瓜、舒肥雞胸");
+  assert.equal(merged.calories, 478);
+  assert.equal(merged.carb, 55);
+  assert.equal(merged.protein, 34);
+});
+
+test("mergeDayData 身體數值後值覆蓋、空值不覆蓋", () => {
+  const merged = mergeDayData("body", { weight: 62.9, fat: 32.4 }, { weight: 62.8, fat: "" });
+  assert.deepEqual(merged, { weight: 62.8, fat: 32.4 });
+});
+
+test("mergeDayData 運動合併後 TDEE 重新加總", () => {
+  const merged = mergeDayData("exercise",
+    { activity: "快走", minutes: 40, calories: 180, bmr: 1320, tdee: 1500 },
+    { activity: "重訓", minutes: 30, calories: 120 });
+  assert.equal(merged.activity, "快走、重訓");
+  assert.equal(merged.minutes, 70);
+  assert.equal(merged.calories, 300);
+  assert.equal(merged.tdee, 1620); // 1320 + 300
+});
+
+test("mergeDayData 併入已串接過的清單時逐一去重", () => {
+  const merged = mergeDayData("water", { amount: 500, kind: "白開水" }, { amount: 750, kind: "無糖茶、白開水" });
+  assert.equal(merged.kind, "白開水、無糖茶");
+  assert.equal(merged.amount, 1250);
+});
+
+test("mergeDayData externalId 串接保留，避免健康匯入重複", () => {
+  const merged = mergeDayData("exercise",
+    { activity: "跑步", calories: 200, externalId: "hk-workout-1" },
+    { activity: "游泳", calories: 150, externalId: "hk-workout-2" });
+  assert.equal(merged.externalId, "hk-workout-1、hk-workout-2");
 });

@@ -7,7 +7,7 @@ import {
   monthMatrix, nextInjection, programProgress, symptomStats, taskSummary, todayKey,
   todayTasks, trend, waterTotal, weekStats, weightSeries,
   nutritionTotals, describeEntry, dosePresets, siteRotation, injectionStats, INJECTION_SITES,
-  parseDateKey, toDateKey, shiftDays, formatDose, expenseStats,
+  parseDateKey, toDateKey, shiftDays, formatDose, expenseStats, mergeDayData,
   type Data, type Entry, type GoalProgress, type ProfileData, type ProgramProgress, type TodayTask, type WeightPoint,
 } from "./health";
 import { NUTRIENT_KEYS, NUTRIENT_LABELS, scaleFood, searchFoods, type FoodDb, type FoodRow } from "./food-db";
@@ -92,8 +92,17 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
   const importHealth=useCallback(async(silent:boolean)=>{
     try{
       const additions=await fetchHealthEntries(entriesRef.current);
+      let working=[...entriesRef.current];
       for(const item of additions){
-        await fetch("/api/entries",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(item)});
+        const existing=working.find(e=>e.category===item.category&&e.recordedAt===item.recordedAt&&e.id>0);
+        if(existing){
+          const merged=mergeDayData(item.category,existing.data,item.data);
+          await fetch(`/api/entries?id=${existing.id}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({data:merged})});
+          working=working.map(x=>x.id===existing.id?{...x,data:merged}:x);
+        }else{
+          const r=await fetch("/api/entries",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(item)});
+          if(r.ok){const v=await r.json();if(v.entry)working=[v.entry,...working];}
+        }
       }
       if(additions.length){
         const r=await fetch("/api/entries"); if(r.ok){const v=await r.json(); if(v?.entries) setEntries(v.entries);}
@@ -107,16 +116,32 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
   function chooseCat(value:string){ setCat(value); localStorage.setItem("catcare-cat",value); }
   function flash(message:string){ setNotice(message); setTimeout(()=>setNotice(""),2500); }
   async function saveData(category:string,recordedAt:string,data:Data){
-    const draft={id:draftId--,category,recordedAt,data};
+    // 同一天、同一類別的所有既有紀錄＋這筆新資料，統整成一筆（負數 id 是未回寫完成的草稿，不動）。
+    const sameDay=entries.filter(e=>e.category===category&&e.recordedAt===recordedAt&&e.id>0)
+      .sort((a,b)=>a.id-b.id);
+    const existing=sameDay[0];
+    const extras=sameDay.slice(1);
+    const mergedData=existing
+      ?[...sameDay.slice(1).map(e=>e.data),data].reduce((acc,d)=>mergeDayData(category,acc,d),existing.data)
+      :data;
+    const updated=existing
+      ?entries.filter(x=>!extras.some(e=>e.id===x.id)).map(x=>x.id===existing.id?{...x,data:mergedData}:x)
+      :[{id:draftId--,category,recordedAt,data},...entries];
     // 小貓的短反應：體重紀錄若讓里程碑往前一格就開心跳，否則揮手鼓勵一下。
-    const reached=category==="body"&&milestonesDoneCount(weightSeries([draft,...entries]),profile)>milestonesDoneCount(weightSeries(entries),profile);
+    const reached=category==="body"&&milestonesDoneCount(weightSeries(updated),profile)>milestonesDoneCount(weightSeries(entries),profile);
     companionReact(reached?"success":"cheer");
-    setEntries(a=>[draft,...a]); flash(reached?"達成新的里程碑！小貓為你慶祝 ✓":"已收進今日的貓咪日記 ✓");
+    const snapshot=entries;
+    setEntries(updated);
+    flash(reached?"達成新的里程碑！小貓為你慶祝 ✓":existing?"已併入同一天的紀錄 ✓":"已收進今日的貓咪日記 ✓");
     try{
-      const r=await fetch("/api/entries",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({category,recordedAt,data})});
-      if(r.ok){const v=await r.json();setEntries(a=>a.map(x=>x.id===draft.id?v.entry:x));}
-      else flash("尚未存進資料庫，請稍後再試一次");
-    }catch{ flash("目前連不上資料庫，紀錄只留在這個畫面"); }
+      const r=existing
+        ?await fetch(`/api/entries?id=${existing.id}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({data:mergedData})})
+        :await fetch("/api/entries",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({category,recordedAt,data})});
+      // 被併掉的多餘同日紀錄從資料庫移除
+      if(r.ok) for(const extra of extras) await fetch(`/api/entries?id=${extra.id}`,{method:"DELETE"}).catch(()=>{});
+      if(r.ok){const v=await r.json();if(v.entry)setEntries(a=>a.map(x=>(existing?x.id===existing.id:x.id===updated[0].id)?v.entry:x));}
+      else{ setEntries(snapshot); flash("尚未存進資料庫，請稍後再試一次"); }
+    }catch{ setEntries(snapshot); flash("目前連不上資料庫，這筆變更已取消"); }
   }
   async function removeEntry(id:number){
     const snapshot=entries; setEntries(a=>a.filter(x=>x.id!==id)); flash("已刪除這筆紀錄");
@@ -719,4 +744,9 @@ function Injection({entries,save}:{entries:Entry[];save:Save}){
       </table></div>
     </>:<p className="empty">還沒有施打紀錄，從第一針開始記吧。</p>}
   </div></>}
-function Exercise({entries,save,companion}:{entries:Entry[];save:Save;companion:Companion}){return <><Panel title="運動與每日消耗" sub="不求快，只求穩穩地把活動放進生活。小貓也一起原地踏步。" figure={<CompanionCat companion={companion} state="exercise" size={230} className="panel-cat"/>}><Form cat="exercise" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="運動項目" name="activity"><input name="activity" placeholder="例：快走、重訓"/></Field><Field label="時間 (分鐘)" name="minutes"/><Field label="消耗熱量 (kcal)" name="calories"/><Field label="基礎代謝 BMR (kcal)" name="bmr"/><Field label="當日總消耗 TDEE (kcal)" name="tdee"/></Form></Panel><History entries={entries} cat="exercise"/></>}
+function Exercise({entries,save,companion}:{entries:Entry[];save:Save;companion:Companion}){
+  const [calories,setCalories]=useState(""),[bmr,setBmr]=useState("");
+  // 當日總消耗＝基礎代謝＋消耗熱量，自動加總不用另外輸入
+  const tdee=(Number(calories)||0)+(Number(bmr)||0);
+  function submit(category:string,form:HTMLFormElement){save(category,form);setCalories("");setBmr("");}
+  return <><Panel title="運動與每日消耗" sub="不求快，只求穩穩地把活動放進生活。小貓也一起原地踏步。" figure={<CompanionCat companion={companion} state="exercise" size={230} className="panel-cat"/>}><Form cat="exercise" save={submit}><Field label="日期" name="recordedAt" type="date"/><Field label="運動項目" name="activity"><input name="activity" placeholder="例：快走、重訓"/></Field><Field label="時間 (分鐘)" name="minutes"/><Field label="消耗熱量 (kcal)" name="calories"><input name="calories" type="number" min="0" value={calories} onChange={e=>setCalories(e.target.value)}/></Field><Field label="基礎代謝 BMR (kcal)" name="bmr"><input name="bmr" type="number" min="0" value={bmr} onChange={e=>setBmr(e.target.value)}/></Field><Field label="當日總消耗 TDEE (kcal)" name="tdee"><input name="tdee" type="number" value={tdee||""} readOnly placeholder="自動加總"/></Field></Form></Panel><History entries={entries} cat="exercise"/></>}

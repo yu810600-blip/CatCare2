@@ -280,6 +280,55 @@ export function trend(series: WeightPoint[], days: number, today: string): Trend
   return { days, change, points: inWindow, from, to };
 }
 
+/* ---------- 同日合併 ---------- */
+
+// 數值欄位相加；清單類欄位用「、」串接去重；其餘欄位新值覆蓋舊值。
+const SUM_FIELDS: Record<string, readonly string[]> = {
+  water: ["amount"],
+  food: ["amount", "calories", "protein", "totalFat", "saturated", "carb", "sugar", "fiber", "sodium"],
+  exercise: ["minutes", "calories"],
+  expense: ["amount"],
+};
+const JOIN_FIELDS: Record<string, readonly string[]> = {
+  food: ["food", "brand"],
+  water: ["kind"],
+  supplement: ["name", "dose", "notes"],
+  exercise: ["activity"],
+  expense: ["item", "qty", "notes"],
+  symptoms: ["notes"],
+};
+
+/**
+ * 同一天、同一類別的新紀錄併進既有紀錄，讓每個項目一天只有一筆。
+ * externalId 一律串接保留：健康匯入靠它防重複，覆蓋掉會導致重複匯入。
+ */
+export function mergeDayData(category: string, oldData: Data, newData: Data): Data {
+  const merged: Data = { ...oldData };
+  const sums = new Set(SUM_FIELDS[category] ?? []);
+  const joins = new Set(JOIN_FIELDS[category] ?? []);
+  for (const [key, value] of Object.entries(newData)) {
+    if (String(value).trim() === "") continue;
+    if (sums.has(key)) {
+      merged[key] = Math.round((num(merged[key]) + num(value)) * 10) / 10;
+    } else if (joins.has(key) || key === "externalId") {
+      // 兩邊都可能已是「、」串接過的清單，拆開逐一去重再併
+      const parts = String(merged[key] ?? "").split("、").filter(Boolean);
+      for (const incoming of String(value).split("、").filter(Boolean)) {
+        if (!parts.includes(incoming)) parts.push(incoming);
+      }
+      merged[key] = parts.join("、");
+    } else {
+      merged[key] = value;
+    }
+  }
+  // 運動的當日總消耗＝基礎代謝＋合計消耗，合併後重新算，不吃輸入的舊值。
+  if (category === "exercise") {
+    const bmr = num(merged.bmr), calories = num(merged.calories);
+    if (bmr > 0 || calories > 0) merged.tdee = Math.round(bmr + calories);
+  }
+  return merged;
+}
+
 /* ---------- 今日任務 ---------- */
 
 export type TaskState = "done" | "todo" | "off";

@@ -48,7 +48,8 @@ export type HealthImport = { category: string; recordedAt: string; data: Data };
 export async function fetchHealthEntries(existing: Entry[], days = 7): Promise<HealthImport[]> {
   const health = await plugin();
   if (!health) return [];
-  const known = new Set(existing.map(e => String(e.data.externalId ?? "")).filter(Boolean));
+  // externalId 在同日合併後會以「、」串接，逐一拆開比對才不會重複匯入
+  const known = new Set(existing.flatMap(e => String(e.data.externalId ?? "").split("、")).filter(Boolean));
   const end = new Date();
   const start = new Date(end.getTime() - days * 86400000);
   const range = { startDate: start.toISOString(), endDate: end.toISOString() };
