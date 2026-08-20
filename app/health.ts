@@ -158,7 +158,7 @@ export function nextInjection(entries: Entry[], today: string): NextInjection | 
       return {
         at, dateKey: at.slice(0, 10),
         medicine: String(e.data.medicine || "尚未填寫"),
-        dose: String(e.data.dose || ""),
+        dose: formatDose(e.data.dose),
       };
     })
     .filter(x => parseDateKey(x.dateKey) !== null)
@@ -173,9 +173,92 @@ export function nextInjection(entries: Entry[], today: string): NextInjection | 
   return {
     at: dateKey, dateKey,
     medicine: String(last.data.medicine || "尚未填寫"),
-    dose: String(last.data.dose || ""),
+    dose: formatDose(last.data.dose),
     daysAway: diffDays(today, dateKey), overdue: dateKey < today, inferred: true,
   };
+}
+
+/* ---------- 劑量與部位 ---------- */
+
+/** 舊資料的劑量是自由文字（例：「0.5 mg」），新資料是數字；統一抽出 mg 數值。 */
+export function parseDoseMg(value: string | number | undefined): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const match = /([0-9]+(?:\.[0-9]+)?)/.exec(String(value ?? ""));
+  return match ? Number(match[1]) : null;
+}
+
+/** 顯示用：抽得出數字就標 mg，抽不出就原樣顯示，不破壞舊紀錄。 */
+export function formatDose(value: string | number | undefined): string {
+  const mg = parseDoseMg(value);
+  if (mg !== null) return `${mg} mg`;
+  const raw = String(value ?? "").trim();
+  return raw || "—";
+}
+
+/** 常見劑量快選，依表單填的藥品名稱切換。 */
+export function dosePresets(medicine: string): number[] {
+  const name = medicine.toLowerCase();
+  if (name.includes("wegovy") || medicine.includes("週纖達")) return [0.25, 0.5, 1, 1.7, 2.4];
+  if (name.includes("mounjaro") || medicine.includes("猛健樂")) return [2.5, 5, 7.5, 10, 12.5, 15];
+  return [];
+}
+
+export const INJECTION_SITES = ["右下腹", "左下腹", "右大腿前側", "左大腿前側", "右上臂", "左上臂"] as const;
+
+export type SiteRotation = { last: { site: string; date: string } | null; suggested: string };
+
+/** 依固定順序輪替：讀最近一筆的部位，建議下一個；沒打過就從頭開始。 */
+export function siteRotation(entries: Entry[]): SiteRotation {
+  const last = entries
+    .filter(e => e.category === "injection" && String(e.data.site || "").trim())
+    .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt) || a.id - b.id)
+    .at(-1);
+  if (!last) return { last: null, suggested: INJECTION_SITES[0] };
+  const site = String(last.data.site);
+  const index = INJECTION_SITES.indexOf(site as typeof INJECTION_SITES[number]);
+  return {
+    last: { site, date: last.recordedAt },
+    suggested: INJECTION_SITES[(index + 1) % INJECTION_SITES.length],
+  };
+}
+
+/* ---------- 注射歷史 ---------- */
+
+export type InjectionRow = {
+  id: number; date: string; medicine: string; dose: string; site: string;
+  /** 與上一針間隔天數；第一針為 null。 */
+  gapDays: number | null;
+};
+
+export type InjectionStats = {
+  total: number;
+  /** 從最新一針往回數，間隔在 5–9 天內視為連續施打的週數。 */
+  streakWeeks: number;
+  topSite: string | null;
+  rows: InjectionRow[];
+};
+
+export function injectionStats(entries: Entry[]): InjectionStats {
+  const shots = entries
+    .filter(e => e.category === "injection")
+    .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt) || a.id - b.id);
+  const rows: InjectionRow[] = shots.map((shot, index) => ({
+    id: shot.id, date: shot.recordedAt,
+    medicine: String(shot.data.medicine || "—"),
+    dose: formatDose(shot.data.dose),
+    site: String(shot.data.site || "—"),
+    gapDays: index === 0 ? null : diffDays(shots[index - 1].recordedAt, shot.recordedAt),
+  }));
+  let streakWeeks = shots.length ? 1 : 0;
+  for (let i = rows.length - 1; i > 0; i -= 1) {
+    const gap = rows[i].gapDays;
+    if (gap !== null && gap >= 5 && gap <= 9) streakWeeks += 1;
+    else break;
+  }
+  const counts = new Map<string, number>();
+  for (const row of rows) if (row.site !== "—") counts.set(row.site, (counts.get(row.site) ?? 0) + 1);
+  const topSite = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  return { total: rows.length, streakWeeks, topSite, rows: [...rows].reverse() };
 }
 
 /* ---------- 趨勢 ---------- */
@@ -281,7 +364,7 @@ const FIELD_LABELS: Record<string, FieldMeta> = {
   waist: { label: "腰圍", unit: "cm" }, chest: { label: "胸圍", unit: "cm" },
   muscle: { label: "肌肉量", unit: "kg" }, machine: { label: "機器" },
   food: { label: "食物" }, amount: { label: "份量", unit: "g" },
-  name: { label: "品名" },
+  name: { label: "品名" }, item: { label: "品項" }, qty: { label: "數量" },
   calories: { label: "熱量", unit: "kcal" }, brand: { label: "品牌" },
   protein: { label: "蛋白質", unit: "g" }, totalFat: { label: "脂肪", unit: "g" },
   saturated: { label: "飽和脂肪", unit: "g" }, carb: { label: "碳水", unit: "g" },
@@ -296,6 +379,7 @@ const FIELD_LABELS: Record<string, FieldMeta> = {
 // amount 在飲食是公克、在飲水是毫升，同名不同意義的欄位在這裡分開。
 const CATEGORY_LABELS: Record<string, Record<string, FieldMeta>> = {
   water: { amount: { label: "飲水量", unit: "ml" } },
+  expense: { amount: { label: "金額", unit: "元" } },
 };
 
 /** 把一筆紀錄轉成「標籤 值 單位」的字串，取代原本只列出裸數字的做法。 */
@@ -304,7 +388,9 @@ export function describeEntry(entry: Entry): string[] {
     .filter(([, value]) => String(value).trim() !== "")
     .map(([key, value]) => {
       const meta = CATEGORY_LABELS[entry.category]?.[key] ?? FIELD_LABELS[key];
-      const text = key === "next" ? String(value).replace("T", " ") : String(value);
+      const text = key === "next" ? String(value).replace("T", " ")
+        : key === "dose" && typeof value === "number" ? `${value} mg`
+        : String(value);
       if (!meta) return text;
       return `${meta.label} ${text}${meta.unit ? ` ${meta.unit}` : ""}`;
     });
@@ -340,7 +426,7 @@ export function milestones(goal: GoalProgress): Milestone[] {
 
 export type DayTotals = {
   date: string; intake: number; burn: number; net: number;
-  water: number; minutes: number; weight: number | null; counts: Record<string, number>;
+  water: number; minutes: number; spend: number; weight: number | null; counts: Record<string, number>;
 };
 
 export function dayTotals(entries: Entry[], dateKey: string): DayTotals {
@@ -353,6 +439,7 @@ export function dayTotals(entries: Entry[], dateKey: string): DayTotals {
     date: dateKey, intake, burn, net,
     water: waterTotal(entries, dateKey),
     minutes: rows.filter(e => e.category === "exercise").reduce((t, e) => t + num(e.data.minutes), 0),
+    spend: rows.filter(e => e.category === "expense").reduce((t, e) => t + num(e.data.amount), 0),
     weight: weights.length ? round1(weights[weights.length - 1]) : null,
     counts,
   };
@@ -361,7 +448,7 @@ export function dayTotals(entries: Entry[], dateKey: string): DayTotals {
 export type WeekStats = {
   start: string; end: string; label: string;
   avgWeight: number | null; change: number | null;
-  intake: number; burn: number; water: number; minutes: number; days: number;
+  intake: number; burn: number; water: number; minutes: number; spend: number; days: number;
 };
 
 export function weekStats(entries: Entry[], today: string, weeks: number): WeekStats[] {
@@ -381,6 +468,7 @@ export function weekStats(entries: Entry[], today: string, weeks: number): WeekS
       burn: days.reduce((t, d) => t + d.burn, 0),
       water: days.reduce((t, d) => t + d.water, 0),
       minutes: days.reduce((t, d) => t + d.minutes, 0),
+      spend: days.reduce((t, d) => t + d.spend, 0),
       days: days.filter(d => Object.keys(d.counts).length > 0).length,
     });
   }
@@ -409,6 +497,30 @@ export function symptomStats(entries: Entry[]): SymptomStat[] {
       average: round1(values.reduce((t, v) => t + v, 0) / values.length),
     }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+/* ---------- 開銷 ---------- */
+
+export type ExpenseStats = {
+  total: number; thisMonth: number; weeklyAverage: number;
+  /** 平均每減 1 公斤的花費；沒有減重數據時為 null。 */
+  perKgLost: number | null;
+};
+
+export function expenseStats(entries: Entry[], today: string, kgLost: number): ExpenseStats {
+  const rows = entries
+    .filter(e => e.category === "expense" && parseDateKey(e.recordedAt) !== null)
+    .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));
+  const total = rows.reduce((t, e) => t + num(e.data.amount), 0);
+  const thisMonth = rows
+    .filter(e => e.recordedAt.slice(0, 7) === today.slice(0, 7))
+    .reduce((t, e) => t + num(e.data.amount), 0);
+  const spanDays = rows.length ? Math.max((diffDays(rows[0].recordedAt, today) ?? 0) + 1, 1) : 0;
+  const weeklyAverage = spanDays ? Math.round(total / (spanDays / 7)) : 0;
+  return {
+    total, thisMonth, weeklyAverage,
+    perKgLost: total > 0 && kgLost > 0 ? Math.round(total / kgLost) : null,
+  };
 }
 
 /* ---------- 月曆 ---------- */

@@ -12,7 +12,8 @@
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern docs --ignore-pattern ios",
     "db:generate": "drizzle-kit generate",
-    "build:pages": "vite build --config vite.static.config.ts"
+    "build:pages": "vite build --config vite.static.config.ts",
+    "test:unit": "node --experimental-strip-types --test tests/health.test.mts"
   },
   "dependencies": {
     "@capacitor/cli": "^8.5.0",

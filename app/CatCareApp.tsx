@@ -6,12 +6,13 @@ import {
   bmi, bmiLabel, calorieTotals, dayTotals, EMPTY_PROFILE, formatDate, goalProgress, milestones,
   monthMatrix, nextInjection, programProgress, symptomStats, taskSummary, todayKey,
   todayTasks, trend, waterTotal, weekStats, weightSeries,
-  nutritionTotals, describeEntry,
-  type Data, type Entry, type ProfileData, type TodayTask, type WeightPoint,
+  nutritionTotals, describeEntry, dosePresets, siteRotation, injectionStats, INJECTION_SITES,
+  parseDateKey, toDateKey, shiftDays, formatDose, expenseStats,
+  type Data, type Entry, type GoalProgress, type ProfileData, type ProgramProgress, type TodayTask, type WeightPoint,
 } from "./health";
 import { NUTRIENT_KEYS, NUTRIENT_LABELS, scaleFood, searchFoods, type FoodDb, type FoodRow } from "./food-db";
 import { asset } from "./asset";
-import { CompanionCat, COMPANIONS, companionByPhoto, milestonesDoneCount, useCompanion, type Companion, type CompanionState } from "./companion";
+import { CompanionCat, COMPANIONS, companionByPhoto, milestonesDoneCount, poseSrc, useCompanion, type Companion, type CompanionState } from "./companion";
 
 // 登出路徑由平台攔截處理，不是 app 內的頁面，所以維持原生 <a>。
 // eslint-disable-next-line @next/next/no-html-link-for-pages
@@ -30,7 +31,7 @@ type User = { userId: string; displayName: string; email: string; fullName: stri
 const LABELS: Record<string, string> = {
   home: "健康總覽", body: "身體數值", food: "飲食熱量", water: "飲水紀錄",
   supplement: "營養補充", exercise: "運動消耗", injection: "施打紀錄",
-  symptoms: "生理狀況", calendar: "月曆紀錄", insights: "統計與目標", profile: "個人資料",
+  symptoms: "生理狀況", expense: "開銷紀錄", calendar: "月曆紀錄", insights: "統計與目標", profile: "個人資料",
 };
 const NAV = [
   ["home", "健康總覽", "/"], ["daily", "每日紀錄", "/body"], ["care", "療程紀錄", "/injection"],
@@ -39,11 +40,11 @@ const NAV = [
 // section → 所屬分頁（決定導覽的 active 樣式與顯示哪組子頁籤）
 const PAGE_OF: Record<string, string> = {
   home: "home", body: "daily", food: "daily", water: "daily", supplement: "daily", exercise: "daily",
-  injection: "care", symptoms: "care", calendar: "review", insights: "review", profile: "profile",
+  injection: "care", symptoms: "care", expense: "care", calendar: "review", insights: "review", profile: "profile",
 };
 const SUBTABS: Record<string, readonly (readonly [string, string])[]> = {
   daily: [["body", "身體數值"], ["food", "飲食"], ["water", "飲水"], ["supplement", "營養品"], ["exercise", "運動"]],
-  care: [["injection", "施打"], ["symptoms", "生理狀況"]],
+  care: [["injection", "施打"], ["symptoms", "生理狀況"], ["expense", "開銷"]],
   review: [["calendar", "月曆"], ["insights", "統計與目標"]],
 };
 const NAV_ICONS: Record<string, React.ReactNode> = {
@@ -53,9 +54,9 @@ const NAV_ICONS: Record<string, React.ReactNode> = {
   review: <svg viewBox="0 0 24 24"><path d="M4.5 20.5h15"/><path d="M6.5 20V11.5"/><path d="M12 20V4.5"/><path d="M17.5 20v-6"/></svg>,
   profile: <svg viewBox="0 0 24 24"><circle cx="12" cy="8.2" r="3.9"/><path d="M4.6 20.6c.8-3.6 3.8-5.6 7.4-5.6s6.6 2 7.4 5.6"/></svg>,
 };
-const RECORDS = ["body", "symptoms", "food", "water", "supplement", "exercise", "injection"] as const;
+const RECORDS = ["body", "symptoms", "food", "water", "supplement", "exercise", "injection", "expense"] as const;
 type Record0 = typeof RECORDS[number];
-const RECORD_GLYPHS: Record<Record0, string> = { body: "◌", symptoms: "♡", food: "◇", water: "◒", supplement: "✽", exercise: "△", injection: "+" };
+const RECORD_GLYPHS: Record<Record0, string> = { body: "◌", symptoms: "♡", food: "◇", water: "◒", supplement: "✽", exercise: "△", injection: "+", expense: "¤" };
 const DRINKS = ["白開水", "無糖茶", "黑咖啡", "氣泡水", "湯品"] as const;
 const CATS = [
   ["/cat-white.jpg", "白貓"], ["/cat-tabby.jpg", "虎斑貓"], ["/cat-orange.jpg", "橘貓"],
@@ -121,11 +122,11 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
     {active!=="home"&&<div className="floating-companion"><CompanionCat companion={companion} state={companionState} size={62}/></div>}
     <datalist id="brands">{[...new Set(entries.filter(e=>e.category==="food").map(e=>String(e.data.brand||"")).filter(Boolean))].map(x=><option key={x}>{x}</option>)}</datalist>
     {active==="home"&&<Dashboard entries={entries} profile={profile} series={series} companion={companion} companionState={companionState}/>}
-    {active==="body"&&<Body entries={entries} series={series} save={save}/>} {active==="symptoms"&&<Symptoms entries={entries} save={save}/>}
+    {active==="body"&&<Body entries={entries} profile={profile} save={save}/>} {active==="symptoms"&&<Symptoms entries={entries} save={save}/>}
     {active==="food"&&<Food entries={entries} profile={profile} save={save}/>} {active==="water"&&<Water entries={entries} save={save} saveData={saveData}/>}
-    {active==="supplement"&&<Supplement entries={entries} save={save}/>}
+    {active==="supplement"&&<Supplement entries={entries} save={save}/>} {active==="expense"&&<Expense entries={entries} save={save}/>}
     {active==="exercise"&&<Exercise entries={entries} save={save} companion={companion}/>} {active==="injection"&&<Injection entries={entries} save={save}/>}
-    {active==="calendar"&&<CalendarPage entries={entries}/>} {active==="insights"&&<Insights entries={entries} profile={profile} series={series}/>}
+    {active==="calendar"&&<CalendarPage entries={entries}/>} {active==="insights"&&<Insights entries={entries} profile={profile} series={series} companion={companion}/>}
     {active==="profile"&&<Profile user={user} profile={profile} setProfile={setProfile} local={local} cat={cat} chooseCat={chooseCat}/>}
   </main></div></RemoveEntry.Provider>;
 }
@@ -214,7 +215,7 @@ function Dashboard({entries,profile,series,companion,companionState}:{entries:En
           <TrendBox title="本週變化" trend={week}/>
           <TrendBox title="最近 30 天" trend={month}/>
         </div>
-        <Chart points={series}/>
+        <TrendChart entries={entries} profile={profile}/>
       </div>
     </section>
 
@@ -248,12 +249,58 @@ function TaskRow({task}:{task:TodayTask}){
   const mark=task.state==="done"?"✓":task.state==="todo"?"○":"–";
   return <li className={`task ${task.state}`}><Link href={task.href}><b>{mark}</b><span>{task.label}</span><small>{task.hint}</small></Link></li>;
 }
-function Chart({points}:{points:WeightPoint[]}){
-  if(!points.length) return <div className="chart empty-chart"><b>尚無體重紀錄</b><span>新增第一筆身體數值後，這裡會畫出走勢。</span></div>;
-  const shown=points.slice(-10),values=shown.map(p=>p.weight);
-  const min=Math.min(...values)-.8,span=Math.max(Math.max(...values)+.8-min,.1);
-  const xy=values.map((v,i)=>`${18+i*264/Math.max(shown.length-1,1)},${118-(v-min)/span*86}`);
-  return <div className="chart"><svg viewBox="0 0 300 145" role="img" aria-label="體重變化折線圖"><path d="M18 32H282M18 75H282M18 118H282"/><polyline points={xy.join(" ")}/>{xy.map((point,i)=>{const [x,y]=point.split(",");return <circle key={i} cx={x} cy={y} r="4"/>})}</svg><div>{shown.map((point,i)=><span key={`${point.date}-${i}`}>{point.date.slice(5)}</span>)}</div></div>;
+const CHART_METRICS = [["weight","體重","kg"],["fat","體脂","%"],["waist","腰圍","cm"],["muscle","肌肉量","kg"]] as const;
+const CHART_PERIODS = [[30,"30 天"],[90,"90 天"],[0,"全部"]] as const;
+
+/**
+ * 趨勢圖：時間等距 X 軸、期間與指標切換、目標體重虛線、施打日標記。
+ * 維持手刻 SVG，不引入圖表函式庫。
+ */
+function TrendChart({entries,profile}:{entries:Entry[];profile:ProfileData}){
+  const [metric,setMetric]=useState<typeof CHART_METRICS[number][0]>("weight");
+  const [period,setPeriod]=useState<number>(30);
+  const [pickedShot,setPickedShot]=useState<string|null>(null);
+  const today=todayKey();
+  const since=period>0?shiftDays(today,-(period-1)):"";
+  const meta=CHART_METRICS.find(m=>m[0]===metric)!;
+  const points=entries
+    .filter(e=>e.category==="body"&&(!since||e.recordedAt>=since))
+    .map(e=>({date:e.recordedAt,value:Number(e.data[metric])}))
+    .filter(pt=>parseDateKey(pt.date)!==null&&pt.value>0)
+    .sort((a,b)=>a.date.localeCompare(b.date));
+  const shots=[...new Set(entries.filter(e=>e.category==="injection"&&(!since||e.recordedAt>=since)&&parseDateKey(e.recordedAt)!==null).map(e=>e.recordedAt))].sort();
+  const controls=<div className="chart-controls">
+    <div role="group" aria-label="指標">{CHART_METRICS.map(([key,label])=><button type="button" key={key} className={metric===key?"on":""} onClick={()=>setMetric(key)}>{label}</button>)}</div>
+    <div role="group" aria-label="期間">{CHART_PERIODS.map(([days,label])=><button type="button" key={days} className={period===days?"on":""} onClick={()=>setPeriod(days)}>{label}</button>)}</div>
+  </div>;
+  if(!points.length) return <>{controls}<div className="chart empty-chart"><b>尚無{meta[1]}紀錄</b><span>{period>0?`最近 ${period} 天沒有${meta[1]}數值，換個期間或先記一筆。`:`新增身體數值後，這裡會畫出走勢。`}</span></div></>;
+
+  const time=(key:string)=>parseDateKey(key)!.getTime();
+  const t0=time(points[0].date),t1=Math.max(time(points.at(-1)!.date),shots.length?time(shots.at(-1)!):t0);
+  const spanT=Math.max(t1-t0,1);
+  const x=(key:string)=>18+(time(key)-t0)/spanT*264;
+  const values=points.map(pt=>pt.value);
+  const target=metric==="weight"&&profile.targetWeight>0?profile.targetWeight:null;
+  const lo=Math.min(...values,...(target!==null?[target]:[]));
+  const hi=Math.max(...values,...(target!==null?[target]:[]));
+  const pad=Math.max((hi-lo)*0.12,0.6);
+  const min=lo-pad,spanV=Math.max(hi+pad-min,0.1);
+  const y=(value:number)=>118-(value-min)/spanV*86;
+  const xy=points.map(pt=>`${x(pt.date)},${y(pt.value)}`);
+  // X 軸標籤：依時間等距取 4 個刻度
+  const ticks=Array.from({length:4},(_,i)=>toDateKey(new Date(t0+spanT*i/3)));
+  const shotDose=(date:string)=>{const row=entries.find(e=>e.category==="injection"&&e.recordedAt===date&&e.data.dose!==undefined&&e.data.dose!=="");return row?formatDose(row.data.dose):"未填劑量"};
+  return <>{controls}<div className="chart trend-chart">
+    <svg viewBox="0 0 300 145" role="img" aria-label={`${meta[1]}變化折線圖`}>
+      <path d="M18 32H282M18 75H282M18 118H282"/>
+      {target!==null&&<g className="target-line"><line x1="18" x2="282" y1={y(target)} y2={y(target)}/><text x="281" y={y(target)-4} textAnchor="end">目標 {target} {meta[2]}</text></g>}
+      <polyline points={xy.join(" ")}/>
+      {points.map((pt,i)=>{const [cx,cy]=xy[i].split(",");return <circle key={pt.date+i} cx={cx} cy={cy} r={points.length>20?2.6:4}/>})}
+      {shots.map(date=><circle key={date} className={`shot-dot${pickedShot===date?" on":""}`} cx={x(date)} cy="136" r="4" role="button" aria-label={`${formatDate(date)} 施打`} onClick={()=>setPickedShot(pickedShot===date?null:date)}/>)}
+    </svg>
+    <div className="chart-ticks">{ticks.map((tick,i)=><span key={i}>{tick.slice(5)}</span>)}</div>
+    {shots.length>0&&<p className="shot-note">{pickedShot?<>💉 {formatDate(pickedShot)} 施打 {shotDose(pickedShot)}</>:"下緣圓點是施打日，點一下看當天劑量"}</p>}
+  </div></>;
 }
 
 /* ---------- 月曆與歷史紀錄 ---------- */
@@ -297,12 +344,13 @@ function CalendarPage({entries}:{entries:Entry[]}){
 
 /* ---------- 統計與里程碑 ---------- */
 
-function Insights({entries,profile,series}:{entries:Entry[];profile:ProfileData;series:WeightPoint[]}){
+function Insights({entries,profile,series,companion}:{entries:Entry[];profile:ProfileData;series:WeightPoint[];companion:Companion}){
   const today=todayKey();
   const goal=goalProgress(series,profile);
   const weeks=weekStats(entries,today,8);
   const symptoms=symptomStats(entries);
   const marks=milestones(goal);
+  const spend=expenseStats(entries,today,goal.lost);
   return <>
     <section className="page-panel insight-panel"><div className="panel-copy"><p className="eyebrow">INSIGHTS</p><h2>統計與目標</h2><p>把每天的紀錄整理成週趨勢與里程碑，看見自己走過的距離。</p></div>
       <div className="insight-summary">
@@ -315,15 +363,26 @@ function Insights({entries,profile,series}:{entries:Entry[];profile:ProfileData;
 
     <div className="card"><div className="card-title"><div><span>WEEKLY</span><h3>最近 8 週統計</h3></div></div>
       <div className="table-scroll"><table className="stat-table">
-        <thead><tr><th>週別</th><th>平均體重</th><th>體重變化</th><th>攝取</th><th>消耗</th><th>運動</th><th>飲水</th><th>有紀錄</th></tr></thead>
+        <thead><tr><th>週別</th><th>平均體重</th><th>體重變化</th><th>攝取</th><th>消耗</th><th>運動</th><th>飲水</th><th>花費</th><th>有紀錄</th></tr></thead>
         <tbody>{weeks.map(week=><tr key={week.start}>
           <td>{week.label}</td>
           <td>{week.avgWeight!==null?`${week.avgWeight} kg`:"—"}</td>
           <td className={week.change===null?"":week.change<0?"down":week.change>0?"up":""}>{week.change!==null?`${week.change>0?"+":""}${week.change} kg`:"—"}</td>
-          <td>{week.intake} kcal</td><td>{week.burn} kcal</td><td>{week.minutes} 分</td><td>{week.water} ml</td><td>{week.days} 天</td>
+          <td>{week.intake} kcal</td><td>{week.burn} kcal</td><td>{week.minutes} 分</td><td>{week.water} ml</td><td>{week.spend?`NT$ ${week.spend.toLocaleString()}`:"—"}</td><td>{week.days} 天</td>
         </tr>)}</tbody>
       </table></div>
     </div>
+
+    <div className="card"><div className="card-title"><div><span>EXPENSES</span><h3>開銷摘要</h3></div><Link href="/expense">前往紀錄 →</Link></div>
+      {spend.total>0?<div className="energy-strip expense-strip">
+        <div><span>累計總花費</span><strong>{spend.total.toLocaleString()}</strong><small>NT$</small></div>
+        <div><span>本月花費</span><strong>{spend.thisMonth.toLocaleString()}</strong><small>NT$</small></div>
+        <div><span>平均每週</span><strong>{spend.weeklyAverage.toLocaleString()}</strong><small>NT$</small></div>
+        {spend.perKgLost!==null&&<div><span>平均每減 1 kg</span><strong>{spend.perKgLost.toLocaleString()}</strong><small>NT$</small></div>}
+      </div>:<p className="empty">還沒有開銷紀錄。到療程紀錄的「開銷」子頁把藥費、掛號費記下來，這裡會幫你算總帳。</p>}
+    </div>
+
+    <ShareCard goal={goal} program={programProgress(profile,today)} marksDone={marks.filter(m=>m.done).length} companion={companion}/>
 
     <section className="dash-two">
       <div className="card"><div className="card-title"><div><span>MILESTONES</span><h3>目標與里程碑</h3></div></div>
@@ -337,6 +396,74 @@ function Insights({entries,profile,series}:{entries:Entry[];profile:ProfileData;
     </section>
     <div className="alert soft">統計只是個人紀錄的整理，不能用來判讀病情或調整劑量，有疑問請與醫療人員討論。</div>
   </>;
+}
+
+/* ---------- 成果分享卡 ---------- */
+
+function ShareCard({goal,program,marksDone,companion}:{goal:GoalProgress;program:ProgramProgress;marksDone:number;companion:Companion}){
+  const [busy,setBusy]=useState(false),[message,setMessage]=useState("");
+  const ready=goal.hasWeight&&goal.start>0;
+  async function draw():Promise<Blob>{
+    const canvas=document.createElement("canvas");canvas.width=1080;canvas.height=1350;
+    const ctx=canvas.getContext("2d")!;
+    const grad=ctx.createLinearGradient(0,0,1080,1350);
+    grad.addColorStop(0,"#f7e8ee");grad.addColorStop(1,"#f0eafd");
+    ctx.fillStyle=grad;ctx.fillRect(0,0,1080,1350);
+    ctx.fillStyle="#ffffff";
+    ctx.beginPath();ctx.roundRect(70,90,940,1170,48);ctx.fill();
+    const font=(size:number,weight=800)=>`${weight} ${size}px "Noto Sans TC","PingFang TC",sans-serif`;
+    ctx.fillStyle="#b28593";ctx.font=font(30,900);ctx.textAlign="left";
+    ctx.fillText("CAT CARE TRACKER",130,190);
+    ctx.fillStyle="#3d3a46";ctx.font=font(64,900);
+    ctx.fillText("貓貓輕生活・減重紀錄",130,270);
+    ctx.fillStyle="#b85f79";ctx.font=font(170,900);
+    ctx.fillText(`-${goal.lost} kg`,130,480);
+    ctx.fillStyle="#6e6873";ctx.font=font(46,700);
+    ctx.fillText(`${goal.start} kg  →  ${goal.current} kg`,130,570);
+    const facts:[string,string][]=[];
+    if(goal.hasTarget) facts.push(["目標完成度",`${goal.percent}%`]);
+    if(program.hasStart) facts.push(["療程進度",`第 ${program.weekCount} 週`]);
+    if(marksDone>0) facts.push(["達成里程碑",`${marksDone} 個`]);
+    facts.forEach(([label,value],index)=>{
+      const y=690+index*120;
+      ctx.fillStyle="#faf7f9";
+      ctx.beginPath();ctx.roundRect(130,y-70,500,100,24);ctx.fill();
+      ctx.fillStyle="#928b96";ctx.font=font(32,700);ctx.fillText(label,160,y-18);
+      ctx.fillStyle="#3d3a46";ctx.font=font(46,900);ctx.textAlign="right";ctx.fillText(value,600,y-14);ctx.textAlign="left";
+    });
+    try{
+      const img=new Image();img.src=poseSrc(companion,"cheer");
+      await img.decode();
+      const height=560,width=img.naturalWidth*height/img.naturalHeight;
+      ctx.drawImage(img,1010-width,1180-height,width,height);
+    }catch{/* 貓圖載不到就出純文字卡 */}
+    ctx.fillStyle="#a49daa";ctx.font=font(30,700);
+    ctx.fillText(`貓貓輕生活 · ${formatDate(todayKey())}`,130,1200);
+    return await new Promise<Blob>((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("blob")),"image/png"));
+  }
+  async function share(){
+    if(busy) return;
+    setBusy(true);setMessage("");
+    try{
+      const blob=await draw();
+      const file=new File([blob],"catcare-progress.png",{type:"image/png"});
+      // iOS 等支援 Web Share 的環境走系統分享面板，桌面瀏覽器直接下載
+      if(typeof navigator.canShare==="function"&&navigator.canShare({files:[file]})){
+        await navigator.share({files:[file]});
+      }else{
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement("a");a.href=url;a.download="catcare-progress.png";a.click();
+        setTimeout(()=>URL.revokeObjectURL(url),3000);
+      }
+      setMessage("成果卡已產生 ✓");
+    }catch(error){ if((error as Error).name!=="AbortError") setMessage("產生失敗，請再試一次"); }
+    setBusy(false);setTimeout(()=>setMessage(""),3000);
+  }
+  return <div className="card share-card"><div className="card-title"><div><span>SHARE</span><h3>成果卡片</h3></div></div>
+    {ready?<><p className="rail-note">把目前的成果做成一張 1080×1350 的分享圖，附上你的陪伴小貓。</p>
+      <div className="share-actions"><button type="button" className="primary" onClick={share} disabled={busy}>{busy?"產生中…":"產生成果卡"}</button>{message&&<span>{message}</span>}</div></>
+      :<p className="empty">先記一筆體重，成果卡才有數據可以畫。</p>}
+  </div>;
 }
 
 /* ---------- 個人資料 ---------- */
@@ -412,7 +539,7 @@ function History({entries,cat}:{entries:Entry[];cat:string}){
 }
 function Form({cat,save,children}:{cat:string;save:Save;children:React.ReactNode}){return <form onSubmit={(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();save(cat,e.currentTarget)}}>{children}{cat==="food"&&<Field label="品牌" name="brand"><input name="brand" list="brands" placeholder="例：桂格、義美、品牌自填"/></Field>}<Submit/></form>}
 
-function Body({entries,series,save}:{entries:Entry[];series:WeightPoint[];save:Save}){const machines=[...new Set(entries.filter(e=>e.category==="body").map(e=>String(e.data.machine)).filter(Boolean))];return <><Panel title="身體數值" sub="每一個小數字，都是你認真生活的證據。" img="/cat-tabby.jpg"><Form cat="body" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="體重 (kg)" name="weight" step="0.1"/><Field label="體脂 (%)" name="fat" step="0.1"/><Field label="腰圍 (cm)" name="waist" step="0.1"/><Field label="胸圍 (cm)" name="chest" step="0.1"/><Field label="肌肉量 (kg)" name="muscle" step="0.1"/><Field label="測量機器" name="machine"><><input name="machine" list="machines" placeholder="例：InBody 270"/><datalist id="machines">{machines.map(x=><option key={x}>{x}</option>)}</datalist></></Field></Form></Panel><div className="card wide-chart"><div className="card-title"><div><span>PROGRESS</span><h3>體重趨勢</h3></div><Link href="/insights">統計分析 →</Link></div><Chart points={series}/></div><History entries={entries} cat="body"/></>}
+function Body({entries,profile,save}:{entries:Entry[];profile:ProfileData;save:Save}){const machines=[...new Set(entries.filter(e=>e.category==="body").map(e=>String(e.data.machine)).filter(Boolean))];return <><Panel title="身體數值" sub="每一個小數字，都是你認真生活的證據。" img="/cat-tabby.jpg"><Form cat="body" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="體重 (kg)" name="weight" step="0.1"/><Field label="體脂 (%)" name="fat" step="0.1"/><Field label="腰圍 (cm)" name="waist" step="0.1"/><Field label="胸圍 (cm)" name="chest" step="0.1"/><Field label="肌肉量 (kg)" name="muscle" step="0.1"/><Field label="測量機器" name="machine"><><input name="machine" list="machines" placeholder="例：InBody 270"/><datalist id="machines">{machines.map(x=><option key={x}>{x}</option>)}</datalist></></Field></Form></Panel><div className="card wide-chart"><div className="card-title"><div><span>PROGRESS</span><h3>身體趨勢</h3></div><Link href="/insights">統計分析 →</Link></div><TrendChart entries={entries} profile={profile}/></div><History entries={entries} cat="body"/></>}
 
 function SymptomFields({entries}:{entries:Entry[]}){
   const [selected,setSelected]=useState<string[]>([]),[items,setItems]=useState<string[]>([...SYMPTOMS]),[custom,setCustom]=useState("");
@@ -493,11 +620,52 @@ function Water({entries,save,saveData}:{entries:Entry[];save:Save;saveData:SaveD
     <History entries={entries} cat="water"/></>;
 }
 
+function Expense({entries,save}:{entries:Entry[];save:Save}){
+  const old=entries.filter(e=>e.category==="expense");
+  const items=[...new Set([...["週纖達 Wegovy","猛健樂 Mounjaro","回診掛號費","營養品"],...old.map(e=>String(e.data.item)).filter(Boolean)])];
+  return <><Panel title="開銷紀錄" sub="療程的每一筆花費都記下來，統計頁會幫你算總帳。" img="/cat-tabby.jpg"><Form cat="expense" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="品項" name="item"><><input name="item" list="expense-items" placeholder="例：週纖達 Wegovy"/><datalist id="expense-items">{items.map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="金額 (NT$)" name="amount"><input name="amount" type="number" min="0" step="1" placeholder="整數金額"/></Field><Field label="數量" name="qty"><input name="qty" placeholder="例：1 支、2 盒"/></Field><Field label="備註" name="notes"><input name="notes" placeholder="藥局、醫院…"/></Field></Form></Panel><History entries={entries} cat="expense"/></>}
+
 function Supplement({entries,save}:{entries:Entry[];save:Save}){
   const old=entries.filter(e=>e.category==="supplement");
   const names=[...new Set(old.map(e=>String(e.data.name)).filter(Boolean))];
   const doses=[...new Set(old.map(e=>String(e.data.dose)).filter(Boolean))];
   return <><Panel title="營養補充" sub="維他命、蛋白粉或醫師建議的補充品，吃了就順手記一筆。" img="/cat-orange.jpg"><Form cat="supplement" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="品名" name="name"><><input name="name" list="supplement-names" placeholder="例：綜合維他命、乳清蛋白"/><datalist id="supplement-names">{names.map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="劑量／數量" name="dose"><><input name="dose" list="supplement-doses" placeholder="例：1 顆、20 g"/><datalist id="supplement-doses">{doses.map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="備註" name="notes"><input name="notes" placeholder="飯後、睡前…"/></Field></Form></Panel><div className="alert soft">補充品與處方藥的交互作用請先與醫療人員或藥師確認，本站僅做個人紀錄。</div><History entries={entries} cat="supplement"/></>}
 
-function Injection({entries,save}:{entries:Entry[];save:Save}){const old=entries.filter(e=>e.category==="injection"),meds=[...new Set(old.map(e=>String(e.data.medicine)))],doses=[...new Set(old.map(e=>String(e.data.dose)))];return <><Panel title="施打紀錄與提醒" sub="記下醫療人員已指示的用藥資訊，並輪替施打位置。" img="/cat-orange.jpg"><Form cat="injection" save={save}><Field label="施打日期" name="recordedAt" type="date"/><Field label="藥品" name="medicine"><><input name="medicine" list="meds" placeholder="例：週纖達 Wegovy"/><datalist id="meds">{[...new Set(["週纖達 Wegovy","猛健樂 Mounjaro",...meds])].map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="施打劑量" name="dose"><><input name="dose" list="doses" placeholder="依醫囑輸入"/><datalist id="doses">{doses.map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="施打部位" name="site"><select name="site"><option>右下腹</option><option>左下腹</option><option>右大腿前側</option><option>左大腿前側</option><option>右上臂</option><option>左上臂</option></select></Field><Field label="下次提醒" name="next" type="datetime-local"/></Form></Panel><div className="alert soft">劑量調整只能依處方醫療人員指示，本站不會建議或自動變更劑量。</div><History entries={entries} cat="injection"/></>}
+function Injection({entries,save}:{entries:Entry[];save:Save}){
+  const old=entries.filter(e=>e.category==="injection"),meds=[...new Set(old.map(e=>String(e.data.medicine)).filter(Boolean))];
+  const rotation=siteRotation(entries),stats=injectionStats(entries);
+  const [medicine,setMedicine]=useState(""),[doseMg,setDoseMg]=useState(""),[pickedSite,setPickedSite]=useState<string|null>(null);
+  // 沒手動選過就跟著建議走；新增紀錄後建議部位重算，預選自動跟上。
+  const site=pickedSite??rotation.suggested;
+  const presets=dosePresets(medicine||meds[0]||"");
+  const sameAsLast=rotation.last!==null&&site===rotation.last.site;
+  function submit(category:string,form:HTMLFormElement){save(category,form);setDoseMg("");setPickedSite(null);}
+  return <><Panel title="施打紀錄與提醒" sub="記下醫療人員已指示的用藥資訊，並輪替施打位置。" img="/cat-orange.jpg"><Form cat="injection" save={submit}>
+    {rotation.last&&<p className="rotation-hint">上次打在 <b>{rotation.last.site}</b>（{formatDate(rotation.last.date)}），這次建議打 <b>{rotation.suggested}</b></p>}
+    <Field label="施打日期" name="recordedAt" type="date"/>
+    <Field label="藥品" name="medicine"><><input name="medicine" list="meds" value={medicine} onChange={e=>setMedicine(e.target.value)} placeholder="例：週纖達 Wegovy"/><datalist id="meds">{[...new Set(["週纖達 Wegovy","猛健樂 Mounjaro",...meds])].map(x=><option key={x}>{x}</option>)}</datalist></></Field>
+    <Field label="施打劑量 (mg)" name="dose"><><input name="dose" type="number" min="0" step="0.05" value={doseMg} onChange={e=>setDoseMg(e.target.value)} placeholder="依醫囑輸入"/>
+      {presets.length>0&&<div className="dose-quick">{presets.map(mg=><button type="button" key={mg} className={Number(doseMg)===mg?"picked":""} onClick={()=>setDoseMg(String(mg))}>{mg}</button>)}</div>}</></Field>
+    <Field label="施打部位" name="site"><><select name="site" value={site} onChange={e=>setPickedSite(e.target.value)}>{INJECTION_SITES.map(x=><option key={x}>{x}</option>)}</select>
+      {sameAsLast&&<p className="site-warning">與上次相同部位，可能造成皮下硬塊</p>}</></Field>
+    <Field label="下次提醒" name="next" type="datetime-local"/>
+  </Form></Panel>
+  <div className="alert soft">劑量調整只能依處方醫療人員指示，本站不會建議或自動變更劑量。</div>
+  <div className="card injection-history"><div className="card-title"><div><span>HISTORY</span><h3>注射歷史</h3></div></div>
+    {stats.total?<>
+      <div className="energy-strip">
+        <div><span>總施打次數</span><strong>{stats.total}</strong><small>次</small></div>
+        <div><span>目前連續</span><strong>{stats.streakWeeks}</strong><small>週</small></div>
+        <div><span>最常用部位</span><strong className="site-name">{stats.topSite??"—"}</strong><small>&nbsp;</small></div>
+      </div>
+      <div className="table-scroll"><table className="stat-table">
+        <thead><tr><th>日期</th><th>藥品</th><th>劑量</th><th>部位</th><th>與上一針間隔</th><th></th></tr></thead>
+        <tbody>{stats.rows.map(row=>{const entry=entries.find(e=>e.id===row.id);return <tr key={row.id}>
+          <td>{row.date}</td><td>{row.medicine}</td><td>{row.dose}</td><td>{row.site}</td>
+          <td className={row.gapDays===null?"":row.gapDays===7?"gap-ok":"gap-off"}>{row.gapDays===null?"第一針":`${row.gapDays} 天`}</td>
+          <td>{entry&&<DeleteEntry entry={entry}/>}</td>
+        </tr>})}</tbody>
+      </table></div>
+    </>:<p className="empty">還沒有施打紀錄，從第一針開始記吧。</p>}
+  </div></>}
 function Exercise({entries,save,companion}:{entries:Entry[];save:Save;companion:Companion}){return <><Panel title="運動與每日消耗" sub="不求快，只求穩穩地把活動放進生活。小貓也一起原地踏步。" figure={<CompanionCat companion={companion} state="exercise" size={230} className="panel-cat"/>}><Form cat="exercise" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="運動項目" name="activity"><input name="activity" placeholder="例：快走、重訓"/></Field><Field label="時間 (分鐘)" name="minutes"/><Field label="消耗熱量 (kcal)" name="calories"/><Field label="基礎代謝 BMR (kcal)" name="bmr"/><Field label="當日總消耗 TDEE (kcal)" name="tdee"/></Form></Panel><History entries={entries} cat="exercise"/></>}
