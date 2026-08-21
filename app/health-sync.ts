@@ -19,12 +19,19 @@ import { toDateKey, type Data, type Entry } from "./health";
 const PERMISSIONS = ["READ_WEIGHT", "READ_BODY_FAT", "READ_LEAN_BODY_MASS", "READ_WORKOUTS", "READ_ACTIVE_CALORIES"] as const;
 const round1 = (value: number) => Math.round(value * 10) / 10;
 
-async function plugin() {
+/**
+ * 注意：回傳值刻意用物件包住，不能直接回傳 Health 這個 Capacitor Proxy——
+ * Proxy 對任何屬性（包含 .then）都會回傳方法包裝，async 函式回傳它時
+ * 會被當成 thenable 呼叫 Health.then()，promise 永遠不會 resolve。
+ */
+type HealthApi = { health: Awaited<typeof import("capacitor-health")>["Health"] };
+
+async function plugin(): Promise<HealthApi | null> {
   const { Capacitor } = await import("@capacitor/core");
   if (!Capacitor.isNativePlatform()) return null;
   const { Health } = await import("capacitor-health");
   const { available } = await Health.isHealthAvailable();
-  return available ? Health : null;
+  return available ? { health: Health } : null;
 }
 
 /** 網頁版回 false，個人資料頁靠這個決定要不要顯示同步區塊。 */
@@ -35,9 +42,9 @@ export async function isHealthSyncAvailable(): Promise<boolean> {
 /** 「連結 Apple 健康」：請求讀取權限（iOS 只在第一次真正跳窗）。 */
 export async function connectAppleHealth(): Promise<boolean> {
   try {
-    const health = await plugin();
-    if (!health) return false;
-    await health.requestHealthPermissions({ permissions: [...PERMISSIONS] });
+    const api = await plugin();
+    if (!api) return false;
+    await api.health.requestHealthPermissions({ permissions: [...PERMISSIONS] });
     return true;
   } catch { return false; }
 }
@@ -46,8 +53,9 @@ export type HealthImport = { category: string; recordedAt: string; data: Data };
 
 /** 讀最近 days 天的健康資料，回傳「還不存在」的新紀錄（比對 externalId）。 */
 export async function fetchHealthEntries(existing: Entry[], days = 7): Promise<HealthImport[]> {
-  const health = await plugin();
-  if (!health) return [];
+  const api = await plugin();
+  if (!api) return [];
+  const { health } = api;
   // externalId 在同日合併後會以「、」串接，逐一拆開比對才不會重複匯入
   const known = new Set(existing.flatMap(e => String(e.data.externalId ?? "").split("、")).filter(Boolean));
   const end = new Date();
