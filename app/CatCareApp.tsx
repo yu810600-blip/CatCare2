@@ -8,6 +8,7 @@ import {
   todayTasks, trend, waterTotal, weekStats, weightSeries,
   nutritionTotals, describeEntry, dosePresets, siteRotation, injectionStats, INJECTION_SITES,
   parseDateKey, toDateKey, shiftDays, formatDose, expenseStats, mergeDayData,
+  RECORD_CATEGORIES, RECORD_FIELDS, isRecordVisible, isFieldVisible, toggleRecord, toggleField, withHiddenDefaults,
   type Data, type Entry, type GoalProgress, type ProfileData, type ProgramProgress, type TodayTask, type WeightPoint,
 } from "./health";
 import { NUTRIENT_KEYS, NUTRIENT_LABELS, scaleFood, searchFoods, type FoodDb, type FoodRow } from "./food-db";
@@ -21,6 +22,9 @@ import { CompanionCat, COMPANIONS, companionByPhoto, milestonesDoneCount, poseSr
 const SignOut = ({label}:{label:string}) => <a href="/signout-with-chatgpt?return_to=%2F">{label}</a>;
 
 const RemoveEntry = createContext<(id: number) => void>(() => {});
+// Form 提供目前類別、CatCareApp 提供個人資料，Field 在元件層級決定要不要渲染
+const FormCategory = createContext<string>("");
+const ProfileContext = createContext<ProfileData>(EMPTY_PROFILE);
 
 // 樂觀更新的暫時 id 用負數遞減，永遠不會撞到資料庫的自增正數 id。
 let draftId = -1;
@@ -79,7 +83,7 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
   const [cat,setCat] = useState<string>(CATS[0][0]);
   useEffect(()=>{ fetch("/api/entries").then(r=>r.ok?r.json():null).then(v=>v?.entries&&setEntries(v.entries)).catch(()=>{}); },[]);
   // 個人資料放在最外層，Dashboard 才拿得到目標體重、身高與療程設定。
-  useEffect(()=>{ fetch("/api/profile").then(r=>r.ok?r.json():null).then(v=>v?.profile&&setProfile(p=>({...p,...v.profile}))).catch(()=>{}); },[]);
+  useEffect(()=>{ fetch("/api/profile").then(r=>r.ok?r.json():null).then(v=>v?.profile&&setProfile(p=>withHiddenDefaults({...p,...v.profile}))).catch(()=>{}); },[]);
   useEffect(()=>{ const saved=localStorage.getItem("catcare-cat"); if(saved&&CATS.some(x=>x[0]===saved)) setCat(saved); },[]);
   // 註冊 service worker，手機才能「加到主畫面」並在離線時看到說明頁。
   useEffect(()=>{ if("serviceWorker" in navigator) navigator.serviceWorker.register(asset("/sw.js")).catch(()=>{}); },[]);
@@ -163,16 +167,19 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
   const series=weightSeries(entries);
   // 陪伴小貓：沿用「我的貓咪」的選擇（selectedCompanionCat），依今日狀態決定動作。
   const companion=companionByPhoto(cat);
-  const todaySummary=taskSummary(todayTasks(entries,todayKey(),nextInjection(entries,todayKey())));
+  const todaySummary=taskSummary(todayTasks(entries,todayKey(),nextInjection(entries,todayKey()),profile.hiddenRecords));
+  // 隱藏類別後的導覽：子頁籤過濾，某分頁的子頁籤全空就連分頁一起藏
+  const shownSubtabs=(key:string)=>(SUBTABS[key]??[]).filter(([section])=>!(RECORD_CATEGORIES as readonly string[]).includes(section)||isRecordVisible(profile,section));
+  const shownNav=NAV.filter(([key])=>!SUBTABS[key]||shownSubtabs(key).length>0);
   const {state:companionState,react:companionReact}=useCompanion(active,todaySummary.allDone);
-  return <RemoveEntry.Provider value={removeEntry}><div className="shell"><aside>
+  return <ProfileContext.Provider value={profile}><RemoveEntry.Provider value={removeEntry}><div className="shell"><aside>
     <Link className="brand" href="/"><b>♥</b><span>貓貓輕生活<small>CAT CARE TRACKER</small></span></Link>
-    <nav>{NAV.map(([key,label,href])=><Link key={key} href={href} className={page===key?"active":""}><b>{NAV_ICONS[key]}</b>{label}</Link>)}</nav>
+    <nav>{shownNav.map(([key,label,href])=><Link key={key} href={SUBTABS[key]?`/${shownSubtabs(key)[0][0]}`:href} className={page===key?"active":""}><b>{NAV_ICONS[key]}</b>{label}</Link>)}</nav>
     <div className="aside-cat"><CompanionCat companion={companion} state={companionState} size={84}/><p>今天也有好好照顧自己嗎？</p></div>
     <p className="medical-note">僅供個人紀錄，不取代醫療建議。持續或嚴重不適請立即就醫。</p>
   </aside><main>
     <header><div><p className="eyebrow">MY PRIVATE HEALTH LOG</p><h1>{LABELS[active]}</h1></div><div className="avatar"><label className="cat-picker"><span>我的貓咪</span><select value={cat} onChange={e=>chooseCat(e.target.value)} aria-label="選擇網站貓咪圖片">{CATS.map(([src,name])=><option value={src} key={src}>{name}</option>)}</select></label><div className="account"><Link href="/profile">{profile.displayName||user.displayName}</Link>{local?<span>資料存在此裝置</span>:<SignOut label="登出"/>}</div><img src={asset(cat)} alt="目前選擇的貓咪"/></div></header>
-    {SUBTABS[page]&&<div className="subtabs" role="navigation" aria-label="分頁內切換">{SUBTABS[page].map(([key,label])=><Link key={key} href={`/${key}`} className={active===key?"on":""}>{label}</Link>)}</div>}
+    {SUBTABS[page]&&shownSubtabs(page).length>0&&<div className="subtabs" role="navigation" aria-label="分頁內切換">{shownSubtabs(page).map(([key,label])=><Link key={key} href={`/${key}`} className={active===key?"on":""}>{label}</Link>)}</div>}
     {notice&&<div className="toast">{notice}</div>}
     {active!=="home"&&<div className="floating-companion"><CompanionCat companion={companion} state={companionState} size={62}/></div>}
     <datalist id="brands">{[...new Set(entries.filter(e=>e.category==="food").map(e=>String(e.data.brand||"")).filter(Boolean))].map(x=><option key={x}>{x}</option>)}</datalist>
@@ -184,7 +191,7 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
     {active==="calendar"&&<CalendarPage entries={entries}/>} {active==="insights"&&<Insights entries={entries} profile={profile} series={series} companion={companion}/>}
     {active==="profile"&&<Profile user={user} profile={profile} setProfile={setProfile} local={local} cat={cat} chooseCat={chooseCat}
       healthSync={healthReady?<HealthSyncSection importHealth={importHealth} last={healthLast}/>:undefined}/>}
-  </main></div></RemoveEntry.Provider>;
+  </main></div></RemoveEntry.Provider></ProfileContext.Provider>;
 }
 
 /* ---------- 首頁 Dashboard ---------- */
@@ -195,7 +202,7 @@ function Dashboard({entries,profile,series,companion,companionState}:{entries:En
   const goal=goalProgress(series,profile);
   const program=programProgress(profile,today);
   const injection=nextInjection(entries,today);
-  const tasks=todayTasks(entries,today,injection);
+  const tasks=todayTasks(entries,today,injection,profile.hiddenRecords);
   const summary=taskSummary(tasks);
   const week=trend(series,7,today);
   const month=trend(series,30,today);
@@ -275,7 +282,7 @@ function Dashboard({entries,profile,series,companion,companionState}:{entries:En
       </div>
     </section>
 
-    <section className="quick"><h3>快速補記</h3><div>{RECORDS.map(k=><Link href={`/${k}`} key={k}><b>{RECORD_GLYPHS[k]}</b>{LABELS[k]}<span>→</span></Link>)}</div></section>
+    <section className="quick"><h3>快速補記</h3><div>{RECORDS.filter(k=>isRecordVisible(profile,k)).map(k=><Link href={`/${k}`} key={k}><b>{RECORD_GLYPHS[k]}</b>{LABELS[k]}<span>→</span></Link>)}</div></section>
   </>;
 }
 
@@ -318,6 +325,7 @@ function TrendChart({entries,profile}:{entries:Entry[];profile:ProfileData}){
   const [pickedShot,setPickedShot]=useState<string|null>(null);
   const today=todayKey();
   const since=period>0?shiftDays(today,-(period-1)):"";
+  const metrics=CHART_METRICS.filter(([key])=>isFieldVisible(profile,"body",key));
   const meta=CHART_METRICS.find(m=>m[0]===metric)!;
   const points=entries
     .filter(e=>e.category==="body"&&(!since||e.recordedAt>=since))
@@ -326,7 +334,7 @@ function TrendChart({entries,profile}:{entries:Entry[];profile:ProfileData}){
     .sort((a,b)=>a.date.localeCompare(b.date));
   const shots=[...new Set(entries.filter(e=>e.category==="injection"&&(!since||e.recordedAt>=since)&&parseDateKey(e.recordedAt)!==null).map(e=>e.recordedAt))].sort();
   const controls=<div className="chart-controls">
-    <div role="group" aria-label="指標">{CHART_METRICS.map(([key,label])=><button type="button" key={key} className={metric===key?"on":""} onClick={()=>setMetric(key)}>{label}</button>)}</div>
+    <div role="group" aria-label="指標">{metrics.map(([key,label])=><button type="button" key={key} className={metric===key?"on":""} onClick={()=>setMetric(key)}>{label}</button>)}</div>
     <div role="group" aria-label="期間">{CHART_PERIODS.map(([days,label])=><button type="button" key={days} className={period===days?"on":""} onClick={()=>setPeriod(days)}>{label}</button>)}</div>
   </div>;
   if(!points.length) return <>{controls}<div className="chart empty-chart"><b>尚無{meta[1]}紀錄</b><span>{period>0?`最近 ${period} 天沒有${meta[1]}數值，換個期間或先記一筆。`:`新增身體數值後，這裡會畫出走勢。`}</span></div></>;
@@ -638,7 +646,7 @@ function Profile({user,profile,setProfile,local,cat,chooseCat,healthSync}:{user:
   async function submit(e:FormEvent<HTMLFormElement>){
     e.preventDefault();
     const response=await fetch("/api/profile",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(profile)});
-    if(response.ok){const value=await response.json();setProfile({...profile,...value.profile});setMessage("個人資料已儲存 ✓");}else setMessage("儲存失敗，請稍後再試");
+    if(response.ok){const value=await response.json();setProfile(withHiddenDefaults({...profile,...value.profile}));setMessage("個人資料已儲存 ✓");}else setMessage("儲存失敗，請稍後再試");
     setTimeout(()=>setMessage(""),2500);
   }
   const set=(patch:Partial<ProfileData>)=>setProfile({...profile,...patch});
@@ -654,6 +662,20 @@ function Profile({user,profile,setProfile,local,cat,chooseCat,healthSync}:{user:
       <label><span>初始體重 (kg)</span><input type="number" min="0" step="0.1" value={profile.startWeight||""} placeholder="留空則用第一筆身體數值" onChange={e=>set({startWeight:Number(e.target.value)})}/></label>
       <label><span>目標體重 (kg)</span><input type="number" min="0" step="0.1" value={profile.targetWeight||""} onChange={e=>set({targetWeight:Number(e.target.value)})}/></label>
       <label><span>每日熱量目標 (kcal)</span><input type="number" min="0" value={profile.calorieGoal||""} onChange={e=>set({calorieGoal:Number(e.target.value)})}/></label>
+      <h3>我要記錄什麼</h3>
+      <div className="record-picker">
+        {RECORD_CATEGORIES.map(category=>{
+          const on=isRecordVisible(profile,category);
+          return <div key={category} className={`record-row${on?"":" off"}`}>
+            <label className="record-switch"><input type="checkbox" checked={on} onChange={e=>setProfile(toggleRecord(profile,category,e.target.checked))}/><b>{LABELS[category]}</b><small>{on?"記錄中":"已關閉，資料保留"}</small></label>
+            {on&&<div className="record-fields">{RECORD_FIELDS[category].map(field=>{
+              const locked=field.locked===true,checked=isFieldVisible(profile,category,field.key);
+              return <label key={field.key} className={locked?"locked":""}><input type="checkbox" checked={checked} disabled={locked} onChange={e=>setProfile(toggleField(profile,category,field.key,e.target.checked))}/>{field.label}</label>;
+            })}</div>}
+          </div>;
+        })}
+      </div>
+      <p className="profile-note">關閉的類別會從導覽、快速補記與今日任務消失；取消勾選的欄位不會出現在表單上。隨時可以再打開，已經記錄的資料都會保留。設定完請按下方「儲存個人資料」。</p>
       <h3>陪伴小貓</h3>
       <div className="companion-picker">
         {COMPANIONS.map(option=><button type="button" key={option.id} className={companionByPhoto(cat).id===option.id?"picked":""} onClick={()=>chooseCat(option.photo)} aria-label={`選擇 ${option.name} 當陪伴小貓`} aria-pressed={companionByPhoto(cat).id===option.id}>
@@ -674,7 +696,11 @@ function Profile({user,profile,setProfile,local,cat,chooseCat,healthSync}:{user:
 /* ---------- 各項紀錄頁 ---------- */
 
 function Panel({title,sub,img,figure,children}:{title:string;sub:string;img?:string;figure?:React.ReactNode;children:React.ReactNode}){return <section className="page-panel"><div className="panel-copy"><p className="eyebrow">DAILY LOG</p><h2>{title}</h2><p>{sub}</p></div>{figure??(img&&<img src={asset(img)} alt="貓咪水彩插畫"/>)}{children}</section>}
-function Field({label,name,type="number",step,children}:{label:string;name:string;type?:string;step?:string;children?:React.ReactNode}){return <label><span>{label}</span>{children||<input name={name} type={type} step={step}/>}</label>}
+function Field({label,name,type="number",step,children}:{label:string;name:string;type?:string;step?:string;children?:React.ReactNode}){
+  const category=useContext(FormCategory),profile=useContext(ProfileContext);
+  if(category&&!isFieldVisible(profile,category,name)) return null;
+  return <label><span>{label}</span>{children||<input name={name} type={type} step={step}/>}</label>;
+}
 const Submit=()=> <button className="primary" type="submit">收進貓咪日記</button>;
 function symptomSummary(rows:Entry[]){
   const values:string[]=[];
@@ -703,7 +729,7 @@ function History({entries,cat}:{entries:Entry[];cat:string}){
       :<p className="empty">還沒有紀錄，從今天開始吧。</p>}
   </section>;
 }
-function Form({cat,save,children}:{cat:string;save:Save;children:React.ReactNode}){return <form onSubmit={(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();save(cat,e.currentTarget)}}>{children}{cat==="food"&&<Field label="品牌" name="brand"><input name="brand" list="brands" placeholder="例：桂格、義美、品牌自填"/></Field>}<Submit/></form>}
+function Form({cat,save,children}:{cat:string;save:Save;children:React.ReactNode}){return <FormCategory.Provider value={cat}><form onSubmit={(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();save(cat,e.currentTarget)}}>{children}{cat==="food"&&<Field label="品牌" name="brand"><input name="brand" list="brands" placeholder="例：桂格、義美、品牌自填"/></Field>}<Submit/></form></FormCategory.Provider>}
 
 function Body({entries,profile,save}:{entries:Entry[];profile:ProfileData;save:Save}){const machines=[...new Set(entries.filter(e=>e.category==="body").map(e=>String(e.data.machine)).filter(Boolean))];return <><Panel title="身體數值" sub="每一個小數字，都是你認真生活的證據。" img="/cat-tabby.jpg"><Form cat="body" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="體重 (kg)" name="weight" step="0.1"/><Field label="體脂 (%)" name="fat" step="0.1"/><Field label="腰圍 (cm)" name="waist" step="0.1"/><Field label="胸圍 (cm)" name="chest" step="0.1"/><Field label="肌肉量 (kg)" name="muscle" step="0.1"/><Field label="測量機器" name="machine"><><input name="machine" list="machines" placeholder="例：InBody 270"/><datalist id="machines">{machines.map(x=><option key={x}>{x}</option>)}</datalist></></Field></Form></Panel><div className="card wide-chart"><div className="card-title"><div><span>PROGRESS</span><h3>身體趨勢</h3></div><Link href="/insights">統計分析 →</Link></div><TrendChart entries={entries} profile={profile}/></div><History entries={entries} cat="body"/></>}
 
@@ -718,7 +744,7 @@ function SymptomFields({entries}:{entries:Entry[]}){
   function add(){const name=custom.trim();if(!name||items.includes(name))return;const next=[...items,name];setItems(next);setSelected(all=>[...all,name]);setCustom("");localStorage.setItem("catcare-symptoms",JSON.stringify(next.filter(x=>!SYMPTOMS.includes(x as typeof SYMPTOMS[number]))))}
   return <div className="symptom-editor"><span className="field-heading">今日狀況（可複選）</span><div className="custom-symptom"><input value={custom} onChange={e=>setCustom(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();add()}}} placeholder="輸入其他狀況" aria-label="新增自訂生理狀況"/><button type="button" onClick={add}>+新增</button></div>{items.map(name=><div className={`symptom-row ${selected.includes(name)?"chosen":""}`} key={name}><label className="symptom-check"><input type="checkbox" name={`symptom_${name}`} value={name} checked={selected.includes(name)} onChange={()=>toggle(name)}/><b>{name}</b></label>{selected.includes(name)&&<fieldset><legend>{name}嚴重程度</legend>{Array.from({length:11},(_,n)=><label key={n}><input type="radio" name={`severity_${name}`} value={n} defaultChecked={n===1}/><span>{n}</span></label>)}</fieldset>}</div>)}</div>
 }
-function Symptoms({entries,save}:{entries:Entry[];save:Save}){return <><Panel title="每日生理狀況" sub="溫柔觀察身體的訊號，需要時就向醫療人員求助。" img="/cat-white.jpg"><Form cat="symptoms" save={save}><Field label="日期" name="recordedAt" type="date"/><SymptomFields entries={entries}/><Field label="備註" name="notes"><input name="notes" placeholder="何時發生、持續多久…"/></Field></Form></Panel><div className="alert">若有持續劇烈腹痛、無法進食飲水、意識改變等情形，請立即聯繫醫療人員或急診。</div><History entries={entries} cat="symptoms"/></>}
+function Symptoms({entries,save}:{entries:Entry[];save:Save}){const profile=useContext(ProfileContext);return <><Panel title="每日生理狀況" sub="溫柔觀察身體的訊號，需要時就向醫療人員求助。" img="/cat-white.jpg"><Form cat="symptoms" save={save}><Field label="日期" name="recordedAt" type="date"/>{isFieldVisible(profile,"symptoms","symptoms")&&<SymptomFields entries={entries}/>}<Field label="備註" name="notes"><input name="notes" placeholder="何時發生、持續多久…"/></Field></Form></Panel><div className="alert">若有持續劇烈腹痛、無法進食飲水、意識改變等情形，請立即聯繫醫療人員或急診。</div><History entries={entries} cat="symptoms"/></>}
 
 function Food({entries,profile,save}:{entries:Entry[];profile:ProfileData;save:Save}){
   const [db,setDb]=useState<FoodDb|null>(null),[dbFailed,setDbFailed]=useState(false);

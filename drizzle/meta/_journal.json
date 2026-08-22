@@ -22,6 +22,13 @@
       "when": 1787059196107,
       "tag": "0002_concerned_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1787407111906,
+      "tag": "0003_volatile_gorgon",
+      "breakpoints": true
     }
   ]
 }

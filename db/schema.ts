@@ -22,5 +22,7 @@ export const profiles = sqliteTable("profiles", {
   startWeight: real("start_weight").notNull().default(0),
   programStart: text("program_start").notNull().default(""),
   programWeeks: integer("program_weeks").notNull().default(0),
+  hiddenRecords: text("hidden_records", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
+  hiddenFields: text("hidden_fields", { mode: "json" }).$type<Record<string, string[]>>().notNull().default(sql`'{}'`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });

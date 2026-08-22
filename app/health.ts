@@ -10,13 +10,99 @@ export type ProfileData = {
   email: string; displayName: string; birthday: string; sex: string;
   height: number; targetWeight: number; calorieGoal: number;
   startWeight: number; programStart: string; programWeeks: number;
+  /** 使用者選擇不記錄的類別；只影響表單與導覽，不刪任何資料。 */
+  hiddenRecords: string[];
+  /** 各類別選擇不顯示的表單欄位。 */
+  hiddenFields: Record<string, string[]>;
 };
 
 export const EMPTY_PROFILE: ProfileData = {
   email: "", displayName: "", birthday: "", sex: "",
   height: 0, targetWeight: 0, calorieGoal: 0,
   startWeight: 0, programStart: "", programWeeks: 0,
+  hiddenRecords: [], hiddenFields: {},
 };
+
+/* ---------- 自訂紀錄項目 ---------- */
+
+export const RECORD_CATEGORIES = ["body", "symptoms", "food", "water", "supplement", "exercise", "injection", "expense"] as const;
+export type RecordCategory = typeof RECORD_CATEGORIES[number];
+
+export type RecordField = { key: string; label: string; locked?: boolean };
+
+/** 各類別表單的可選欄位；recordedAt 不在清單內，一律顯示。 */
+export const RECORD_FIELDS: Record<RecordCategory, readonly RecordField[]> = {
+  body: [
+    { key: "weight", label: "體重", locked: true }, { key: "fat", label: "體脂" }, { key: "waist", label: "腰圍" },
+    { key: "chest", label: "胸圍" }, { key: "muscle", label: "肌肉量" }, { key: "machine", label: "測量機器" },
+  ],
+  symptoms: [{ key: "symptoms", label: "今日狀況" }, { key: "notes", label: "備註" }],
+  food: [{ key: "food", label: "食物" }, { key: "amount", label: "份量" }, { key: "calories", label: "熱量" }, { key: "brand", label: "品牌" }],
+  water: [{ key: "amount", label: "飲水量" }, { key: "kind", label: "種類" }],
+  supplement: [{ key: "name", label: "品名" }, { key: "dose", label: "劑量／數量" }, { key: "notes", label: "備註" }],
+  exercise: [
+    { key: "activity", label: "運動項目" }, { key: "minutes", label: "時間" }, { key: "calories", label: "消耗熱量" },
+    { key: "bmr", label: "基礎代謝 BMR" }, { key: "tdee", label: "當日總消耗 TDEE" },
+  ],
+  injection: [{ key: "medicine", label: "藥品" }, { key: "dose", label: "施打劑量" }, { key: "site", label: "施打部位" }, { key: "next", label: "下次提醒" }],
+  expense: [{ key: "item", label: "品項" }, { key: "amount", label: "金額" }, { key: "qty", label: "數量" }, { key: "notes", label: "備註" }],
+};
+
+const isCategory = (value: unknown): value is RecordCategory =>
+  typeof value === "string" && (RECORD_CATEGORIES as readonly string[]).includes(value);
+
+export function isFieldLocked(category: string, field: string): boolean {
+  if (field === "recordedAt") return true;
+  return isCategory(category) && RECORD_FIELDS[category].some(f => f.key === field && f.locked === true);
+}
+
+/**
+ * 把任何來源（舊資料、API payload）的 hidden 設定整理成乾淨的形狀：
+ * 未知類別丟掉、去重、鎖定欄位不能被藏、缺欄位視為空。
+ */
+export function normalizeHidden(input: { hiddenRecords?: unknown; hiddenFields?: unknown } | null | undefined): Pick<ProfileData, "hiddenRecords" | "hiddenFields"> {
+  const records = Array.isArray(input?.hiddenRecords) ? input!.hiddenRecords : [];
+  const hiddenRecords = [...new Set(records.filter(isCategory))];
+  const hiddenFields: Record<string, string[]> = {};
+  const raw = input?.hiddenFields;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [category, fields] of Object.entries(raw as Record<string, unknown>)) {
+      if (!isCategory(category) || !Array.isArray(fields)) continue;
+      const known = new Set(RECORD_FIELDS[category].map(f => f.key));
+      const kept = [...new Set(fields.filter((f): f is string => typeof f === "string" && known.has(f) && !isFieldLocked(category, f)))];
+      if (kept.length) hiddenFields[category] = kept;
+    }
+  }
+  return { hiddenRecords, hiddenFields };
+}
+
+/** 舊資料沒有這兩個欄位時補成空，其餘欄位原樣保留。 */
+export function withHiddenDefaults<T extends Partial<ProfileData>>(profile: T): T & Pick<ProfileData, "hiddenRecords" | "hiddenFields"> {
+  return { ...profile, ...normalizeHidden(profile) };
+}
+
+export const isRecordVisible = (profile: Pick<ProfileData, "hiddenRecords">, category: string) =>
+  !profile.hiddenRecords.includes(category);
+
+export const isFieldVisible = (profile: Pick<ProfileData, "hiddenFields">, category: string, field: string) =>
+  isFieldLocked(category, field) || !(profile.hiddenFields[category] ?? []).includes(field);
+
+export const visibleRecords = (profile: Pick<ProfileData, "hiddenRecords">): RecordCategory[] =>
+  RECORD_CATEGORIES.filter(category => isRecordVisible(profile, category));
+
+export function toggleRecord(profile: ProfileData, category: string, visible: boolean): ProfileData {
+  const rest = profile.hiddenRecords.filter(c => c !== category);
+  return { ...profile, hiddenRecords: visible || !isCategory(category) ? rest : [...rest, category] };
+}
+
+export function toggleField(profile: ProfileData, category: string, field: string, visible: boolean): ProfileData {
+  if (isFieldLocked(category, field)) return profile;
+  const current = (profile.hiddenFields[category] ?? []).filter(f => f !== field);
+  const next = visible ? current : [...current, field];
+  const hiddenFields = { ...profile.hiddenFields };
+  if (next.length) hiddenFields[category] = next; else delete hiddenFields[category];
+  return { ...profile, hiddenFields };
+}
 
 /* ---------- 日期 ---------- */
 // 一律用本機日期，避免 toISOString() 在台灣時區把凌晨的紀錄算成前一天。
@@ -353,7 +439,7 @@ export function calorieTotals(entries: Entry[], dateKey: string) {
   return { intake, burn, net: intake - burn };
 }
 
-export function todayTasks(entries: Entry[], today: string, injection: NextInjection | null): TodayTask[] {
+export function todayTasks(entries: Entry[], today: string, injection: NextInjection | null, hiddenRecords: readonly string[] = []): TodayTask[] {
   const has = (category: string) => entries.some(e => e.category === category && e.recordedAt === today);
   const water = waterTotal(entries, today);
   const injectedToday = has("injection");
@@ -364,7 +450,7 @@ export function todayTasks(entries: Entry[], today: string, injection: NextInjec
     : injection.dateKey === today ? "今天是施打日"
     : injection.dateKey < today ? `預定 ${formatDate(injection.dateKey)} 已過`
     : `下次 ${formatDate(injection.dateKey)}${injection.inferred ? "（推算）" : ""}`;
-  return [
+  const tasks: TodayTask[] = [
     { key: "body", label: "今日體重", href: "/body", state: has("body") ? "done" : "todo", hint: has("body") ? "已記錄" : "還沒量" },
     { key: "food", label: "今日飲食", href: "/food", state: has("food") ? "done" : "todo", hint: has("food") ? "已記錄" : "還沒記" },
     { key: "water", label: "今日飲水", href: "/water", state: water > 0 ? "done" : "todo", hint: water > 0 ? `${water} ml` : "還沒喝水紀錄" },
@@ -375,6 +461,7 @@ export function todayTasks(entries: Entry[], today: string, injection: NextInjec
       hint: injectionHint,
     },
   ];
+  return tasks.filter(task => !hiddenRecords.includes(task.key));
 }
 
 export function taskSummary(tasks: TodayTask[]) {

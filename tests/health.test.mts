@@ -5,8 +5,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  dosePresets, injectionStats, INJECTION_SITES, mergeDayData, nextInjection,
-  parseDoseMg, siteRotation, type Entry,
+  dosePresets, EMPTY_PROFILE, injectionStats, INJECTION_SITES, isFieldVisible, isRecordVisible,
+  mergeDayData, nextInjection, normalizeHidden, parseDoseMg, siteRotation, todayTasks, toggleField,
+  toggleRecord, visibleRecords, withHiddenDefaults, type Entry,
 } from "../app/health.ts";
 
 let id = 0;
@@ -125,4 +126,65 @@ test("mergeDayData externalId 串接保留，避免健康匯入重複", () => {
     { activity: "跑步", calories: 200, externalId: "hk-workout-1" },
     { activity: "游泳", calories: 150, externalId: "hk-workout-2" });
   assert.equal(merged.externalId, "hk-workout-1、hk-workout-2");
+});
+
+/* ---------- 自訂紀錄項目 ---------- */
+
+test("normalizeHidden 舊資料沒有欄位時視為空", () => {
+  assert.deepEqual(normalizeHidden(undefined), { hiddenRecords: [], hiddenFields: {} });
+  assert.deepEqual(normalizeHidden({}), { hiddenRecords: [], hiddenFields: {} });
+  assert.deepEqual(normalizeHidden({ hiddenRecords: null, hiddenFields: "x" }), { hiddenRecords: [], hiddenFields: {} });
+});
+
+test("normalizeHidden 丟掉未知類別、未知欄位與鎖定欄位，並去重", () => {
+  const out = normalizeHidden({
+    hiddenRecords: ["water", "nope", "water", 3],
+    hiddenFields: { body: ["weight", "fat", "fat", "ghost"], bogus: ["x"], water: [] },
+  });
+  assert.deepEqual(out, { hiddenRecords: ["water"], hiddenFields: { body: ["fat"] } });
+});
+
+test("withHiddenDefaults 合併舊資料時其餘欄位原樣保留", () => {
+  const legacy = { displayName: "貓貓", targetWeight: 55 } as Partial<typeof EMPTY_PROFILE>;
+  const merged = withHiddenDefaults({ ...EMPTY_PROFILE, ...legacy });
+  assert.equal(merged.displayName, "貓貓");
+  assert.equal(merged.targetWeight, 55);
+  assert.deepEqual(merged.hiddenRecords, []);
+  assert.deepEqual(merged.hiddenFields, {});
+});
+
+test("isFieldVisible：recordedAt 與 body.weight 鎖定，永遠可見", () => {
+  const profile = { ...EMPTY_PROFILE, hiddenFields: { body: ["fat"] } };
+  assert.equal(isFieldVisible(profile, "body", "weight"), true);
+  assert.equal(isFieldVisible(profile, "body", "recordedAt"), true);
+  assert.equal(isFieldVisible(profile, "body", "fat"), false);
+  assert.equal(isFieldVisible(profile, "body", "waist"), true);
+});
+
+test("toggleRecord 關閉與重新開啟，不會重複累積", () => {
+  let profile = toggleRecord(EMPTY_PROFILE, "water", false);
+  profile = toggleRecord(profile, "water", false);
+  assert.deepEqual(profile.hiddenRecords, ["water"]);
+  assert.equal(isRecordVisible(profile, "water"), false);
+  assert.deepEqual(visibleRecords(profile).includes("water"), false);
+  profile = toggleRecord(profile, "water", true);
+  assert.deepEqual(profile.hiddenRecords, []);
+  assert.deepEqual(toggleRecord(EMPTY_PROFILE, "unknown", false).hiddenRecords, []);
+});
+
+test("toggleField 鎖定欄位無法隱藏；全部勾回來時清掉該類別", () => {
+  const locked = toggleField(EMPTY_PROFILE, "body", "weight", false);
+  assert.deepEqual(locked.hiddenFields, {});
+  let profile = toggleField(EMPTY_PROFILE, "exercise", "bmr", false);
+  profile = toggleField(profile, "exercise", "tdee", false);
+  assert.deepEqual(profile.hiddenFields, { exercise: ["bmr", "tdee"] });
+  profile = toggleField(profile, "exercise", "bmr", true);
+  profile = toggleField(profile, "exercise", "tdee", true);
+  assert.deepEqual(profile.hiddenFields, {});
+});
+
+test("todayTasks 隱藏的類別不列入今日任務", () => {
+  const tasks = todayTasks([], "2026-08-22", null, ["water", "exercise"]);
+  assert.deepEqual(tasks.map(t => t.key), ["body", "food", "injection"]);
+  assert.equal(todayTasks([], "2026-08-22", null).length, 5);
 });

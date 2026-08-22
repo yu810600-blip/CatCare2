@@ -2,18 +2,19 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { profiles } from "../../../db/schema";
 import { getChatGPTUser } from "../../chatgpt-auth";
+import { normalizeHidden } from "../../health";
 
 export async function GET() {
   const user = await getChatGPTUser();
   if (!user) return Response.json({ error: "請先登入" }, { status: 401 });
   const [profile] = await getDb().select().from(profiles).where(eq(profiles.userId, user.userId)).limit(1);
-  return Response.json({ profile: profile ?? { userId: user.userId, email: user.email, displayName: user.fullName ?? "", birthday: "", sex: "", height: 0, targetWeight: 0, calorieGoal: 0, startWeight: 0, programStart: "", programWeeks: 0 } });
+  return Response.json({ profile: profile ?? { userId: user.userId, email: user.email, displayName: user.fullName ?? "", birthday: "", sex: "", height: 0, targetWeight: 0, calorieGoal: 0, startWeight: 0, programStart: "", programWeeks: 0, hiddenRecords: [], hiddenFields: {} } });
 }
 
 export async function POST(request: Request) {
   const user = await getChatGPTUser();
   if (!user) return Response.json({ error: "請先登入" }, { status: 401 });
-  const payload = await request.json() as Record<string, string | number>;
+  const payload = await request.json() as Record<string, unknown>;
   const values = {
     userId: user.userId, email: user.email,
     displayName: String(payload.displayName ?? "").slice(0, 60),
@@ -25,6 +26,7 @@ export async function POST(request: Request) {
     startWeight: Math.max(0, Number(payload.startWeight) || 0),
     programStart: String(payload.programStart ?? "").slice(0, 10),
     programWeeks: Math.max(0, Number(payload.programWeeks) || 0),
+    ...normalizeHidden(payload as { hiddenRecords?: unknown; hiddenFields?: unknown }),
     updatedAt: new Date().toISOString(),
   };
   const [profile] = await getDb().insert(profiles).values(values).onConflictDoUpdate({ target: profiles.userId, set: values }).returning();

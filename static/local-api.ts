@@ -14,6 +14,7 @@ type Entry = { id: number; category: string; recordedAt: string; data: Record<st
 const DEFAULT_PROFILE = {
   userId: "local", email: "", displayName: "", birthday: "", sex: "",
   height: 0, targetWeight: 0, calorieGoal: 0, startWeight: 0, programStart: "", programWeeks: 0,
+  hiddenRecords: [] as string[], hiddenFields: {} as Record<string, string[]>,
 };
 
 function read<T>(key: string, fallback: T): T {
