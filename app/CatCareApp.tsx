@@ -13,7 +13,7 @@ import {
 import { NUTRIENT_KEYS, NUTRIENT_LABELS, scaleFood, searchFoods, type FoodDb, type FoodRow } from "./food-db";
 import { asset } from "./asset";
 import { syncInjectionReminders } from "./notifications";
-import { connectAppleHealth, fetchHealthEntries, isHealthSyncAvailable } from "./health-sync";
+import { connectAppleHealth, fetchHealthEntries, isHealthSyncAvailable, type HealthImport } from "./health-sync";
 import { CompanionCat, COMPANIONS, companionByPhoto, milestonesDoneCount, poseSrc, useCompanion, type Companion, type CompanionState } from "./companion";
 
 // 登出路徑由平台攔截處理，不是 app 內的頁面，所以維持原生 <a>。
@@ -87,6 +87,7 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
   useEffect(()=>{ syncInjectionReminders(entries); },[entries]);
   // iOS App：啟動時自動把 Apple 健康（含 Garmin 同步進來的）最近 7 天資料帶入。
   const [healthReady,setHealthReady]=useState(false);
+  const [healthLast,setHealthLast]=useState<HealthSyncRecord|null>(()=>typeof window==="undefined"?null:readHealthLast());
   const healthSyncedOnce=useRef(false);
   useEffect(()=>{ isHealthSyncAvailable().then(setHealthReady); },[]);
   const importHealth=useCallback(async(silent:boolean)=>{
@@ -108,9 +109,13 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
         const r=await fetch("/api/entries"); if(r.ok){const v=await r.json(); if(v?.entries) setEntries(v.entries);}
       }
       if(!silent) flash(additions.length?`已從 Apple 健康帶入 ${additions.length} 筆資料 ✓`:"沒有新的健康資料");
-      localStorage.setItem("catcare-health-synced",todayKey());
-      return additions.length;
-    }catch{ if(!silent) flash("同步失敗，請稍後再試"); return 0; }
+      // 同步結果存下來，個人資料頁可以列出這次到底帶入了哪些數字
+      const record:HealthSyncRecord={at:new Date().toISOString(),items:additions};
+      if(additions.length||!localStorage.getItem("catcare-health-last")) localStorage.setItem("catcare-health-last",JSON.stringify(record));
+      else localStorage.setItem("catcare-health-last",JSON.stringify({...JSON.parse(localStorage.getItem("catcare-health-last")!),checkedAt:record.at}));
+      setHealthLast(readHealthLast());
+      return additions;
+    }catch{ if(!silent) flash("同步失敗，請稍後再試"); return []; }
   },[]);
   useEffect(()=>{ if(healthReady&&!healthSyncedOnce.current){ healthSyncedOnce.current=true; importHealth(true); } },[healthReady,importHealth]);
   function chooseCat(value:string){ setCat(value); localStorage.setItem("catcare-cat",value); }
@@ -178,7 +183,7 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
     {active==="exercise"&&<Exercise entries={entries} save={save} companion={companion}/>} {active==="injection"&&<Injection entries={entries} save={save}/>}
     {active==="calendar"&&<CalendarPage entries={entries}/>} {active==="insights"&&<Insights entries={entries} profile={profile} series={series} companion={companion}/>}
     {active==="profile"&&<Profile user={user} profile={profile} setProfile={setProfile} local={local} cat={cat} chooseCat={chooseCat}
-      healthSync={healthReady?<HealthSyncSection importHealth={importHealth}/>:undefined}/>}
+      healthSync={healthReady?<HealthSyncSection importHealth={importHealth} last={healthLast}/>:undefined}/>}
   </main></div></RemoveEntry.Provider>;
 }
 
@@ -397,7 +402,7 @@ function CalendarPage({entries}:{entries:Entry[]}){
     <section className="history day-detail"><h3>{formatDate(picked)} 的紀錄</h3>
       {detail.length?[...detail].sort((a,b)=>RECORDS.indexOf(a.category as Record0)-RECORDS.indexOf(b.category as Record0)).map(entry=><div key={entry.id}>
         <time>{LABELS[entry.category]}</time>
-        <p>{summarize(entry).map((text,i)=><span key={i}>{text}</span>)}</p>
+        <p>{summarize(entry).map((text,i)=><span key={i}>{text}</span>)}{entry.data.source==="healthkit"&&<em className="source-tag">Apple 健康</em>}</p>
         <DeleteEntry entry={entry}/>
       </div>):<p className="empty">這天還沒有紀錄。</p>}
     </section>
@@ -512,24 +517,48 @@ function Insights({entries,profile,series,companion}:{entries:Entry[];profile:Pr
 
 /* ---------- Apple 健康同步（iOS App 限定） ---------- */
 
-function HealthSyncSection({importHealth}:{importHealth:(silent:boolean)=>Promise<number>}){
+type HealthSyncRecord={at:string;checkedAt?:string;items:HealthImport[]};
+function readHealthLast():HealthSyncRecord|null{
+  try{ const raw=localStorage.getItem("catcare-health-last"); return raw?JSON.parse(raw) as HealthSyncRecord:null; }catch{ return null; }
+}
+const healthItemText=(item:HealthImport)=>{
+  const d=item.data;
+  if(item.category==="body"){
+    const parts=[d.weight!==undefined&&`體重 ${d.weight} kg`,d.fat!==undefined&&`體脂 ${d.fat} %`,d.muscle!==undefined&&`瘦體重 ${d.muscle} kg`].filter(Boolean);
+    return `${parts.join("、")}（${d.machine||"Apple 健康"}）`;
+  }
+  return `${d.activity} ${d.minutes} 分鐘、${d.calories} kcal`;
+};
+const timeText=(iso:string)=>{const t=new Date(iso);return Number.isNaN(t.getTime())?"":`${formatDate(toDateKey(t))} ${String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}`};
+
+function HealthSyncSection({importHealth,last}:{importHealth:(silent:boolean)=>Promise<HealthImport[]>;last:HealthSyncRecord|null}){
   const [busy,setBusy]=useState(false),[message,setMessage]=useState("");
-  const lastSync=typeof window!=="undefined"?localStorage.getItem("catcare-health-synced"):null;
-  async function connect(){
+  const [justNow,setJustNow]=useState<HealthImport[]|null>(null);
+  async function run(afterConnect:boolean){
     setBusy(true);setMessage("");
-    const ok=await connectAppleHealth();
-    if(ok){ await importHealth(false); setMessage("已連結，之後每次開啟 App 會自動同步最近 7 天"); }
-    else setMessage("無法連結 Apple 健康");
+    if(afterConnect){ const ok=await connectAppleHealth(); if(!ok){ setMessage("無法連結 Apple 健康"); setBusy(false); return; } }
+    const added=await importHealth(false);
+    setJustNow(added);
+    setMessage(added.length?`這次帶入 ${added.length} 筆，已寫進對應的紀錄`:"最近 7 天沒有新的資料可帶入");
     setBusy(false);
   }
-  async function syncNow(){ setBusy(true); await importHealth(false); setBusy(false); }
+  async function openSettings(){ try{ const {Health}=await import("capacitor-health"); await Health.openAppleHealthSettings(); }catch{/* 非原生環境 */} }
+  const shown=justNow??last?.items??[];
+  const when=justNow?"本次":last?`上次（${timeText(last.at)}）`:"";
   return <>
     <h3>健康資料同步</h3>
-    <p className="profile-note">從 Apple「健康」帶入體重、體脂、瘦體重與運動（Garmin Connect 同步進健康的資料也包含在內）。匯入的紀錄會標記來源，不會蓋掉你手動輸入的資料。{lastSync&&` 上次同步：${lastSync}。`}</p>
+    <p className="profile-note">從 Apple「健康」帶入體重、體脂、瘦體重與運動（Garmin Connect 同步進健康的資料也包含在內）。帶入的數字會直接寫進當天的「身體數值」和「運動」紀錄，並標記來源；不會蓋掉你手動輸入的資料。</p>
     <div className="health-sync-actions">
-      <button type="button" className="primary" onClick={connect} disabled={busy}>{busy?"處理中…":"連結 Apple 健康"}</button>
-      <button type="button" onClick={syncNow} disabled={busy}>立即同步</button>
+      <button type="button" className="primary" onClick={()=>run(true)} disabled={busy}>{busy?"處理中…":"連結 Apple 健康"}</button>
+      <button type="button" onClick={()=>run(false)} disabled={busy}>立即同步</button>
       {message&&<span>{message}</span>}
+    </div>
+    <div className="health-sync-result">
+      {shown.length?<>
+        <p className="field-heading">{when}帶入的數字</p>
+        <ul>{shown.map((item,i)=><li key={`${item.category}-${item.recordedAt}-${i}`}><time>{formatDate(item.recordedAt)}</time><b>{item.category==="body"?"身體數值":"運動"}</b><span>{healthItemText(item)}</span></li>)}</ul>
+        <p className="profile-note">到 <Link href="/body">身體數值</Link>、<Link href="/exercise">運動</Link> 頁可看到這些紀錄，列上會標示「Apple 健康」。</p>
+      </>:<p className="profile-note">{last?`上次檢查：${timeText(last.checkedAt??last.at)}，`:""}還沒有從 Apple 健康帶入任何數字。若已連結卻沒有資料，請確認「健康」App 裡最近 7 天有體重或運動紀錄，並在權限設定裡允許讀取。<button type="button" className="link-button" onClick={openSettings}>打開權限設定</button></p>}
     </div>
   </>;
 }
@@ -670,7 +699,7 @@ function DeleteEntry({entry}:{entry:Entry}){
 function History({entries,cat}:{entries:Entry[];cat:string}){
   const rows=entries.filter(e=>e.category===cat).slice(0,8);
   return <section className="history"><h3>最近紀錄</h3>
-    {rows.length?rows.map(e=><div key={e.id}><time>{e.recordedAt}</time><p>{summarize(e).map((v,i)=><span key={i}>{v}</span>)}</p><DeleteEntry entry={e}/></div>)
+    {rows.length?rows.map(e=><div key={e.id}><time>{e.recordedAt}</time><p>{summarize(e).map((v,i)=><span key={i}>{v}</span>)}{e.data.source==="healthkit"&&<em className="source-tag">Apple 健康</em>}</p><DeleteEntry entry={e}/></div>)
       :<p className="empty">還沒有紀錄，從今天開始吧。</p>}
   </section>;
 }
