@@ -329,7 +329,9 @@ function TrendChart({entries,profile}:{entries:Entry[];profile:ProfileData}){
   const time=(key:string)=>parseDateKey(key)!.getTime();
   const t0=time(points[0].date),t1=Math.max(time(points.at(-1)!.date),shots.length?time(shots.at(-1)!):t0);
   const spanT=Math.max(t1-t0,1);
-  const x=(key:string)=>18+(time(key)-t0)/spanT*264;
+  // 左側留 44px 給 Y 軸刻度與單位
+  const LEFT=44,RIGHT=282;
+  const x=(key:string)=>LEFT+(time(key)-t0)/spanT*(RIGHT-LEFT);
   const values=points.map(pt=>pt.value);
   const target=metric==="weight"&&profile.targetWeight>0?profile.targetWeight:null;
   const lo=Math.min(...values,...(target!==null?[target]:[]));
@@ -338,18 +340,27 @@ function TrendChart({entries,profile}:{entries:Entry[];profile:ProfileData}){
   const min=lo-pad,spanV=Math.max(hi+pad-min,0.1);
   const y=(value:number)=>118-(value-min)/spanV*86;
   const xy=points.map(pt=>`${x(pt.date)},${y(pt.value)}`);
-  // X 軸標籤：依時間等距取 4 個刻度
+  // X 軸標籤：依時間等距取 4 個刻度；Y 軸三條格線各標一個帶單位的值
   const ticks=Array.from({length:4},(_,i)=>toDateKey(new Date(t0+spanT*i/3)));
+  const yTicks=[118,75,32].map(gy=>({gy,value:Math.round((min+(118-gy)/86*spanV)*10)/10}));
+  // 每個紀錄點標數字；相鄰太近（<22px）的略過，最後一點一定保留
+  const labelled:boolean[]=[];let lastLabelX=-Infinity;
+  points.forEach((pt,i)=>{const cx=x(pt.date);const ok=cx-lastLabelX>=22;labelled.push(ok);if(ok)lastLabelX=cx;});
+  if(points.length>1&&!labelled[points.length-1]){labelled[points.length-1]=true;for(let i=points.length-2;i>=0;i-=1){if(labelled[i]&&x(points.at(-1)!.date)-x(points[i].date)<22){labelled[i]=false;break;}}}
+  const showLabel=(i:number)=>labelled[i];
+  // 最左／最右的數字改成靠邊對齊，才不會撞到 Y 軸刻度或超出右緣
+  const anchorOf=(cx:number)=>cx-LEFT<12?"start":RIGHT-cx<12?"end":"middle";
   const shotDose=(date:string)=>{const row=entries.find(e=>e.category==="injection"&&e.recordedAt===date&&e.data.dose!==undefined&&e.data.dose!=="");return row?formatDose(row.data.dose):"未填劑量"};
   return <>{controls}<div className="chart trend-chart">
     <svg viewBox="0 0 300 145" role="img" aria-label={`${meta[1]}變化折線圖`}>
-      <path d="M18 32H282M18 75H282M18 118H282"/>
-      {target!==null&&<g className="target-line"><line x1="18" x2="282" y1={y(target)} y2={y(target)}/><text x="281" y={y(target)-4} textAnchor="end">目標 {target} {meta[2]}</text></g>}
+      <path d={`M${LEFT} 32H${RIGHT}M${LEFT} 75H${RIGHT}M${LEFT} 118H${RIGHT}`}/>
+      {yTicks.map(tick=><text key={tick.gy} className="axis-label" x={LEFT-5} y={tick.gy+3} textAnchor="end">{tick.value} {meta[2]}</text>)}
+      {target!==null&&<g className="target-line"><line x1={LEFT} x2={RIGHT} y1={y(target)} y2={y(target)}/><text x={RIGHT-1} y={y(target)-4} textAnchor="end">目標 {target} {meta[2]}</text></g>}
       <polyline points={xy.join(" ")}/>
-      {points.map((pt,i)=>{const [cx,cy]=xy[i].split(",");return <circle key={pt.date+i} cx={cx} cy={cy} r={points.length>20?2.6:4}/>})}
+      {points.map((pt,i)=>{const [cx,cy]=xy[i].split(",");return <g key={pt.date+i}><circle cx={cx} cy={cy} r={points.length>20?2.6:4}/>{showLabel(i)&&<text className="point-label" x={cx} y={Number(cy)-8} textAnchor={anchorOf(Number(cx))}>{pt.value}</text>}</g>})}
       {shots.map(date=><circle key={date} className={`shot-dot${pickedShot===date?" on":""}`} cx={x(date)} cy="136" r="4" role="button" aria-label={`${formatDate(date)} 施打`} onClick={()=>setPickedShot(pickedShot===date?null:date)}/>)}
     </svg>
-    <div className="chart-ticks">{ticks.map((tick,i)=><span key={i}>{tick.slice(5)}</span>)}</div>
+    <div className="chart-ticks" style={{paddingLeft:"13%"}}>{ticks.map((tick,i)=><span key={i}>{tick.slice(5)}</span>)}</div>
     {shots.length>0&&<p className="shot-note">{pickedShot?<>💉 {formatDate(pickedShot)} 施打 {shotDose(pickedShot)}</>:"下緣圓點是施打日，點一下看當天劑量"}</p>}
   </div></>;
 }
@@ -393,6 +404,50 @@ function CalendarPage({entries}:{entries:Entry[]}){
   </>;
 }
 
+/* ---------- 週統計單項長條圖 ---------- */
+
+const WEEKLY_METRICS = [
+  ["avgWeight","平均體重","kg"],["change","體重變化","kg"],["intake","攝取熱量","kcal"],["burn","消耗熱量","kcal"],
+  ["minutes","運動時間","分"],["water","飲水量","ml"],["spend","花費","NT$"],["days","有紀錄天數","天"],
+] as const;
+type WeeklyKey = typeof WEEKLY_METRICS[number][0];
+
+/** 一次只看一項數值：八週長條圖，每根標數值，負值（體重下降）以綠色往下長。 */
+function WeeklyBars({weeks,metric}:{weeks:ReturnType<typeof weekStats>;metric:WeeklyKey}){
+  const meta=WEEKLY_METRICS.find(m=>m[0]===metric)!;
+  const values=weeks.map(week=>week[metric] as number|null);
+  const present=values.filter((v):v is number=>v!==null);
+  if(!present.length) return <div className="chart empty-chart"><b>尚無{meta[1]}資料</b><span>這八週還沒有可以畫的紀錄。</span></div>;
+  // 平均體重從 0 起算會讓八根長條幾乎一樣高，改用略低於最小值的基準線放大差異；
+  // 體重變化有正負以 0 為基準；其餘合計型數值從 0 起算。
+  const base=metric==="avgWeight"?Math.floor(Math.min(...present))-1:Math.min(0,...present);
+  const hi=metric==="avgWeight"?Math.max(...present):Math.max(0,...present),lo=base;
+  const span=Math.max(hi-lo,metric==="change"?0.5:1);
+  const top=Math.round((lo+span)*10)/10;
+  const TOP=26,BOTTOM=124,LEFT=44,RIGHT=308;
+  const y=(v:number)=>BOTTOM-(v-lo)/span*(BOTTOM-TOP);
+  const zero=y(Math.max(0,base));
+  const slot=(RIGHT-LEFT)/weeks.length,barW=Math.min(slot*0.56,26);
+  const fmt=(v:number)=>metric==="spend"?v.toLocaleString():metric==="change"&&v>0?`+${v}`:String(v);
+  return <div className="chart weekly-bars"><svg viewBox="0 0 320 150" role="img" aria-label={`${meta[1]}八週長條圖`}>
+    <path d={`M${LEFT} ${TOP}H${RIGHT}M${LEFT} ${zero}H${RIGHT}`}/>
+    <text className="axis-label" x={LEFT-5} y={TOP+3} textAnchor="end">{top} {meta[2]}</text>
+    <text className="axis-label" x={LEFT-5} y={zero+3} textAnchor="end">{Math.max(0,base)} {meta[2]}</text>
+    {lo<0&&<text className="axis-label" x={LEFT-5} y={BOTTOM+3} textAnchor="end">{Math.round(lo*10)/10} {meta[2]}</text>}
+    {weeks.map((week,i)=>{
+      const v=values[i];const cx=LEFT+slot*i+slot/2;
+      if(v===null) return <text key={week.start} className="bar-label muted" x={cx} y={zero-6} textAnchor="middle">—</text>;
+      const top=Math.min(y(v),zero),h=Math.max(Math.abs(y(v)-zero),1.5);
+      const good=metric==="change"?v<0:true;
+      return <g key={week.start}>
+        <rect className={`bar${metric==="change"?(good?" down":" up"):""}`} x={cx-barW/2} y={top} width={barW} height={h} rx="4"/>
+        <text className="bar-label" x={cx} y={v>=0?top-5:top+h+10} textAnchor="middle">{fmt(v)}</text>
+      </g>;
+    })}
+    {weeks.map((week,i)=><text key={week.start} className="axis-label" x={LEFT+slot*i+slot/2} y="143" textAnchor="middle">{week.start.slice(5)}</text>)}
+  </svg><p className="rail-note">每根長條是一週（標示該週起始日），數字為該週{metric==="avgWeight"?"平均":metric==="change"?"首尾差":"合計"}。</p></div>;
+}
+
 /* ---------- 統計與里程碑 ---------- */
 
 function Insights({entries,profile,series,companion}:{entries:Entry[];profile:ProfileData;series:WeightPoint[];companion:Companion}){
@@ -402,6 +457,7 @@ function Insights({entries,profile,series,companion}:{entries:Entry[];profile:Pr
   const symptoms=symptomStats(entries);
   const marks=milestones(goal);
   const spend=expenseStats(entries,today,goal.lost);
+  const [weeklyView,setWeeklyView]=useState("table");
   return <>
     <section className="page-panel insight-panel"><div className="panel-copy"><p className="eyebrow">INSIGHTS</p><h2>統計與目標</h2><p>把每天的紀錄整理成週趨勢與里程碑，看見自己走過的距離。</p></div>
       <div className="insight-summary">
@@ -412,8 +468,13 @@ function Insights({entries,profile,series,companion}:{entries:Entry[];profile:Pr
       </div>
     </section>
 
-    <div className="card"><div className="card-title"><div><span>WEEKLY</span><h3>最近 8 週統計</h3></div></div>
-      <div className="table-scroll"><table className="stat-table">
+    <div className="card"><div className="card-title"><div><span>WEEKLY</span><h3>最近 8 週統計</h3></div>
+        <label className="weekly-select"><span>檢視</span><select value={weeklyView} onChange={e=>setWeeklyView(e.target.value)} aria-label="選擇統計檢視">
+          <option value="table">統整表</option>
+          {WEEKLY_METRICS.map(([key,label])=><option key={key} value={key}>{label}</option>)}
+        </select></label></div>
+      {weeklyView!=="table"?<WeeklyBars weeks={weeks} metric={weeklyView as WeeklyKey}/>
+      :<div className="table-scroll"><table className="stat-table">
         <thead><tr><th>週別</th><th>平均體重</th><th>體重變化</th><th>攝取</th><th>消耗</th><th>運動</th><th>飲水</th><th>花費</th><th>有紀錄</th></tr></thead>
         <tbody>{weeks.map(week=><tr key={week.start}>
           <td>{week.label}</td>
@@ -421,7 +482,7 @@ function Insights({entries,profile,series,companion}:{entries:Entry[];profile:Pr
           <td className={week.change===null?"":week.change<0?"down":week.change>0?"up":""}>{week.change!==null?`${week.change>0?"+":""}${week.change} kg`:"—"}</td>
           <td>{week.intake} kcal</td><td>{week.burn} kcal</td><td>{week.minutes} 分</td><td>{week.water} ml</td><td>{week.spend?`NT$ ${week.spend.toLocaleString()}`:"—"}</td><td>{week.days} 天</td>
         </tr>)}</tbody>
-      </table></div>
+      </table></div>}
     </div>
 
     <div className="card"><div className="card-title"><div><span>EXPENSES</span><h3>開銷摘要</h3></div><Link href="/expense">前往紀錄 →</Link></div>

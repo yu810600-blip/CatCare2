@@ -50,6 +50,9 @@ nav a b svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.
 .stat-table td.gap-ok{color:#3f7a60;font-weight:800}.stat-table td.gap-off{color:#b8607a;font-weight:800}
 .injection-history{margin-top:16px}.injection-history .energy-strip{grid-template-columns:repeat(3,1fr)}.energy-strip strong.site-name{font-size:15px;font-family:inherit;font-weight:800;line-height:1.9}
 .chart-controls{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:10px 0 4px}.chart-controls div{display:flex;gap:4px}.chart-controls button{border:1px solid var(--line);background:white;border-radius:9px;padding:5px 9px;font-size:10px;font-weight:800;color:#77717e}.chart-controls button.on{background:#4e4857;border-color:#4e4857;color:white}
+.trend-chart .axis-label{font-size:7.5px;fill:#9a939d;font-weight:700}.trend-chart .point-label{font-size:8px;fill:#b85f79;font-weight:800}
+.weekly-select{display:flex;align-items:center;gap:6px;font-size:10px;color:#9b8b96;font-weight:800}.weekly-select select{border:1px solid #e8e2dc;border-radius:10px;background:white;padding:6px 26px 6px 9px;font-size:11px;color:#5b5360}
+.weekly-bars svg{width:100%;height:190px;overflow:visible}.weekly-bars path{stroke:#eae4df;stroke-width:1;fill:none}.weekly-bars .bar{fill:#d07992}.weekly-bars .bar.down{fill:#8fcdae}.weekly-bars .bar.up{fill:#d07992}.weekly-bars .axis-label{font-size:7.5px;fill:#9a939d;font-weight:700}.weekly-bars .bar-label{font-size:8px;fill:#3d3a46;font-weight:800}.weekly-bars .bar-label.muted{fill:#b1a8b3}
 .trend-chart .target-line line{stroke:#8fcdae;stroke-width:1.6;stroke-dasharray:5 4}.trend-chart .target-line text{font-size:8px;fill:#3f7a60;font-weight:700}
 .trend-chart .shot-dot{fill:#f3d58a;stroke:#d9a83f;stroke-width:1.5;cursor:pointer}.trend-chart .shot-dot.on{fill:#d07992;stroke:#b8607a}
 .chart-ticks{display:flex;justify-content:space-between;color:#a29ca3;font-size:9px;padding:0 6px}
