@@ -51,6 +51,16 @@ export async function connectAppleHealth(): Promise<boolean> {
 
 export type HealthImport = { category: string; recordedAt: string; data: Data };
 
+// HealthKit 的運動類型是英文代號，顯示成中文；沒對到的原樣保留
+const WORKOUT_NAMES: Record<string, string> = {
+  running: "跑步", walking: "健走", cycling: "騎自行車", swimming: "游泳", hiking: "健行",
+  yoga: "瑜伽", elliptical: "滑步機", rowing: "划船", stairs: "爬梯", dance: "舞蹈", core: "核心訓練",
+  traditionalStrengthTraining: "重訓", functionalStrengthTraining: "功能性訓練",
+  highIntensityIntervalTraining: "高強度間歇", mixedCardio: "混合有氧", pilates: "皮拉提斯",
+  other: "其他運動",
+};
+const workoutName = (type: string) => WORKOUT_NAMES[type] ?? type;
+
 /** 讀最近 days 天的健康資料，回傳「還不存在」的新紀錄（比對 externalId）。 */
 export async function fetchHealthEntries(existing: Entry[], days = 7): Promise<HealthImport[]> {
   const api = await plugin();
@@ -104,9 +114,10 @@ export async function fetchHealthEntries(existing: Entry[], days = 7): Promise<H
       out.push({
         category: "exercise", recordedAt: day,
         data: {
-          activity: workout.workoutType || "運動",
+          activity: workoutName(workout.workoutType || "other"),
           minutes: Math.round(workout.duration / 60),
           calories: Math.round(workout.calories),
+          ...(workout.distance ? { distance: Math.round(workout.distance / 10) / 100 } : {}),
           source: "healthkit", externalId,
         },
       });

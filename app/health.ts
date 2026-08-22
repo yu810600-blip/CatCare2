@@ -419,7 +419,7 @@ const FIELD_LABELS: Record<string, FieldMeta> = {
   saturated: { label: "飽和脂肪", unit: "g" }, carb: { label: "碳水", unit: "g" },
   sugar: { label: "糖", unit: "g" }, fiber: { label: "纖維", unit: "g" },
   sodium: { label: "鈉", unit: "mg" }, kind: { label: "種類" }, water: { label: "飲水", unit: "ml" },
-  activity: { label: "項目" }, minutes: { label: "時間", unit: "分" },
+  activity: { label: "項目" }, minutes: { label: "時間", unit: "分" }, distance: { label: "距離", unit: "km" },
   bmr: { label: "BMR", unit: "kcal" }, tdee: { label: "TDEE", unit: "kcal" },
   medicine: { label: "藥品" }, dose: { label: "劑量" }, site: { label: "部位" },
   next: { label: "下次" }, notes: { label: "備註" },
