@@ -345,7 +345,7 @@ function TrendChart({entries,profile}:{entries:Entry[];profile:ProfileData}){
   const yTicks=[118,75,32].map(gy=>({gy,value:Math.round((min+(118-gy)/86*spanV)*10)/10}));
   // 每個紀錄點標數字；相鄰太近（<22px）的略過，最後一點一定保留
   const labelled:boolean[]=[];let lastLabelX=-Infinity;
-  points.forEach((pt,i)=>{const cx=x(pt.date);const ok=cx-lastLabelX>=22;labelled.push(ok);if(ok)lastLabelX=cx;});
+  points.forEach(pt=>{const cx=x(pt.date);const ok=cx-lastLabelX>=22;labelled.push(ok);if(ok)lastLabelX=cx;});
   if(points.length>1&&!labelled[points.length-1]){labelled[points.length-1]=true;for(let i=points.length-2;i>=0;i-=1){if(labelled[i]&&x(points.at(-1)!.date)-x(points[i].date)<22){labelled[i]=false;break;}}}
   const showLabel=(i:number)=>labelled[i];
   // 最左／最右的數字改成靠邊對齊，才不會撞到 Y 軸刻度或超出右緣
