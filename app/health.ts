@@ -25,7 +25,7 @@ export const EMPTY_PROFILE: ProfileData = {
 
 /* ---------- 自訂紀錄項目 ---------- */
 
-export const RECORD_CATEGORIES = ["body", "symptoms", "food", "water", "supplement", "exercise", "injection", "expense"] as const;
+export const RECORD_CATEGORIES = ["body", "symptoms", "food", "water", "sleep", "supplement", "exercise", "injection", "expense"] as const;
 export type RecordCategory = typeof RECORD_CATEGORIES[number];
 
 export type RecordField = { key: string; label: string; locked?: boolean };
@@ -36,13 +36,17 @@ export const RECORD_FIELDS: Record<RecordCategory, readonly RecordField[]> = {
     { key: "weight", label: "體重", locked: true }, { key: "fat", label: "體脂" }, { key: "waist", label: "腰圍" },
     { key: "chest", label: "胸圍" }, { key: "muscle", label: "肌肉量" }, { key: "machine", label: "測量機器" },
   ],
-  symptoms: [{ key: "symptoms", label: "今日狀況" }, { key: "notes", label: "備註" }],
+  symptoms: [{ key: "symptoms", label: "今日狀況" }, { key: "period", label: "生理期" }, { key: "notes", label: "備註" }],
   food: [{ key: "food", label: "食物" }, { key: "amount", label: "份量" }, { key: "calories", label: "熱量" }, { key: "brand", label: "品牌" }],
   water: [{ key: "amount", label: "飲水量" }, { key: "kind", label: "種類" }],
   supplement: [{ key: "name", label: "品名" }, { key: "dose", label: "劑量／數量" }, { key: "notes", label: "備註" }],
+  sleep: [
+    { key: "hours", label: "睡眠時數", locked: true }, { key: "bedtime", label: "就寢時間" },
+    { key: "waketime", label: "起床時間" }, { key: "notes", label: "備註" },
+  ],
   exercise: [
-    { key: "activity", label: "運動項目" }, { key: "minutes", label: "時間" }, { key: "calories", label: "消耗熱量" },
-    { key: "bmr", label: "基礎代謝 BMR" }, { key: "tdee", label: "當日總消耗 TDEE" },
+    { key: "minutes", label: "運動時間" }, { key: "calories", label: "動態能量" },
+    { key: "bmr", label: "靜態能量" }, { key: "tdee", label: "當日總消耗 TDEE" },
   ],
   injection: [{ key: "medicine", label: "藥品" }, { key: "dose", label: "施打劑量" }, { key: "site", label: "施打部位" }, { key: "next", label: "下次提醒" }],
   expense: [{ key: "item", label: "品項" }, { key: "amount", label: "金額" }, { key: "qty", label: "數量" }, { key: "notes", label: "備註" }],
@@ -376,6 +380,7 @@ const SUM_FIELDS: Record<string, readonly string[]> = {
   expense: ["amount"],
 };
 const JOIN_FIELDS: Record<string, readonly string[]> = {
+  sleep: ["notes"],
   food: ["food", "brand"],
   water: ["kind"],
   supplement: ["name", "dose", "notes"],
@@ -470,6 +475,26 @@ export function taskSummary(tasks: TodayTask[]) {
   return { done, total: active.length, allDone: active.length > 0 && done === active.length };
 }
 
+/* ---------- 靜態能量估算 ---------- */
+
+/**
+ * 依 Mifflin-St Jeor 公式用身高、體重、年齡與生理性別估算基礎代謝（靜態能量）。
+ * 資料不足（缺身高、體重、生日或性別非男女）時回 null，表單留白讓使用者自填。
+ */
+export function estimateBmr(profile: Pick<ProfileData, "height" | "birthday" | "sex">, weightKg: number, today: string = todayKey()): number | null {
+  if (profile.height <= 0 || weightKg <= 0) return null;
+  const birth = parseDateKey(profile.birthday);
+  const now = parseDateKey(today);
+  if (!birth || !now) return null;
+  let age = now.getFullYear() - birth.getFullYear();
+  if (now.getMonth() < birth.getMonth() || (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate())) age -= 1;
+  if (age <= 0 || age > 120) return null;
+  const base = 10 * weightKg + 6.25 * profile.height - 5 * age;
+  if (profile.sex === "male") return Math.round(base + 5);
+  if (profile.sex === "female") return Math.round(base - 161);
+  return null;
+}
+
 /* ---------- 營養素 ---------- */
 
 export type NutritionTotals = {
@@ -507,6 +532,7 @@ const FIELD_LABELS: Record<string, FieldMeta> = {
   sugar: { label: "糖", unit: "g" }, fiber: { label: "纖維", unit: "g" },
   sodium: { label: "鈉", unit: "mg" }, kind: { label: "種類" }, water: { label: "飲水", unit: "ml" },
   activity: { label: "項目" }, minutes: { label: "時間", unit: "分" }, distance: { label: "距離", unit: "km" },
+  hours: { label: "睡眠", unit: "小時" }, bedtime: { label: "就寢" }, waketime: { label: "起床" }, period: { label: "生理期" },
   bmr: { label: "BMR", unit: "kcal" }, tdee: { label: "TDEE", unit: "kcal" },
   medicine: { label: "藥品" }, dose: { label: "劑量" }, site: { label: "部位" },
   next: { label: "下次" }, notes: { label: "備註" },
@@ -516,6 +542,7 @@ const FIELD_LABELS: Record<string, FieldMeta> = {
 const CATEGORY_LABELS: Record<string, Record<string, FieldMeta>> = {
   water: { amount: { label: "飲水量", unit: "ml" } },
   expense: { amount: { label: "金額", unit: "元" } },
+  exercise: { calories: { label: "動態能量", unit: "kcal" }, bmr: { label: "靜態能量", unit: "kcal" } },
 };
 
 /** 把一筆紀錄轉成「標籤 值 單位」的字串，取代原本只列出裸數字的做法。 */

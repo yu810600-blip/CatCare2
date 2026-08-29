@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  dosePresets, EMPTY_PROFILE, injectionStats, INJECTION_SITES, isFieldVisible, isRecordVisible,
+  dosePresets, EMPTY_PROFILE, estimateBmr, injectionStats, INJECTION_SITES, isFieldVisible, isRecordVisible,
   mergeDayData, nextInjection, normalizeHidden, parseDoseMg, siteRotation, todayTasks, toggleField,
   toggleRecord, visibleRecords, withHiddenDefaults, type Entry,
 } from "../app/health.ts";
@@ -187,4 +187,33 @@ test("todayTasks 隱藏的類別不列入今日任務", () => {
   const tasks = todayTasks([], "2026-08-22", null, ["water", "exercise"]);
   assert.deepEqual(tasks.map(t => t.key), ["body", "food", "injection"]);
   assert.equal(todayTasks([], "2026-08-22", null).length, 5);
+});
+
+/* ---------- 睡眠與能量 ---------- */
+
+test("mergeDayData 睡眠時數後值覆蓋、備註串接", () => {
+  const merged = mergeDayData("sleep",
+    { hours: 6.5, bedtime: "23:30", notes: "半夜醒一次" },
+    { hours: 7, waketime: "07:00", notes: "補眠" });
+  assert.equal(merged.hours, 7);
+  assert.equal(merged.bedtime, "23:30");
+  assert.equal(merged.waketime, "07:00");
+  assert.equal(merged.notes, "半夜醒一次、補眠");
+});
+
+test("mergeDayData 匯入的動態＋靜態能量重算 TDEE", () => {
+  const merged = mergeDayData("exercise", { minutes: 30, calories: 200 }, { calories: 280, bmr: 1320 });
+  assert.equal(merged.calories, 480);   // 手動 200 + 匯入 280
+  assert.equal(merged.bmr, 1320);
+  assert.equal(merged.tdee, 1800);      // 1320 + 480
+});
+
+test("estimateBmr 依 Mifflin-St Jeor 估算，資料不足回 null", () => {
+  const profile = { height: 160, birthday: "1994-03-02", sex: "female" };
+  // 2026-08-22 時 32 歲：10*62.8 + 6.25*160 − 5*32 − 161 = 1307
+  assert.equal(estimateBmr(profile, 62.8, "2026-08-22"), 1307);
+  assert.equal(estimateBmr({ ...profile, sex: "male" }, 62.8, "2026-08-22"), 1473);
+  assert.equal(estimateBmr({ ...profile, sex: "" }, 62.8, "2026-08-22"), null);
+  assert.equal(estimateBmr({ ...profile, birthday: "" }, 62.8, "2026-08-22"), null);
+  assert.equal(estimateBmr({ ...profile, height: 0 }, 62.8, "2026-08-22"), null);
 });

@@ -8,7 +8,7 @@ import {
   todayTasks, trend, waterTotal, weekStats, weightSeries,
   nutritionTotals, describeEntry, dosePresets, siteRotation, injectionStats, INJECTION_SITES,
   parseDateKey, toDateKey, shiftDays, formatDose, expenseStats, mergeDayData,
-  RECORD_CATEGORIES, RECORD_FIELDS, isRecordVisible, isFieldVisible, toggleRecord, toggleField, withHiddenDefaults,
+  RECORD_CATEGORIES, RECORD_FIELDS, isRecordVisible, isFieldVisible, toggleRecord, toggleField, withHiddenDefaults, estimateBmr,
   type Data, type Entry, type GoalProgress, type ProfileData, type ProgramProgress, type TodayTask, type WeightPoint,
 } from "./health";
 import { NUTRIENT_KEYS, NUTRIENT_LABELS, scaleFood, searchFoods, type FoodDb, type FoodRow } from "./food-db";
@@ -35,7 +35,7 @@ type User = { userId: string; displayName: string; email: string; fullName: stri
 
 // 每個 section 仍保有自己的路由（舊連結與 PWA 捷徑不會失效），但導覽收斂成五個分頁。
 const LABELS: Record<string, string> = {
-  home: "健康總覽", body: "身體數值", food: "飲食熱量", water: "飲水紀錄",
+  home: "健康總覽", body: "身體數值", food: "飲食熱量", water: "飲水紀錄", sleep: "睡眠紀錄",
   supplement: "營養補充", exercise: "運動消耗", injection: "施打紀錄",
   symptoms: "生理狀況", expense: "開銷紀錄", calendar: "月曆紀錄", insights: "統計與目標", profile: "個人資料",
 };
@@ -45,11 +45,11 @@ const NAV = [
 ] as const;
 // section → 所屬分頁（決定導覽的 active 樣式與顯示哪組子頁籤）
 const PAGE_OF: Record<string, string> = {
-  home: "home", body: "daily", food: "daily", water: "daily", supplement: "daily", exercise: "daily",
+  home: "home", body: "daily", food: "daily", water: "daily", sleep: "daily", supplement: "daily", exercise: "daily",
   injection: "care", symptoms: "care", expense: "care", calendar: "review", insights: "review", profile: "profile",
 };
 const SUBTABS: Record<string, readonly (readonly [string, string])[]> = {
-  daily: [["body", "身體數值"], ["food", "飲食"], ["water", "飲水"], ["supplement", "營養品"], ["exercise", "運動"]],
+  daily: [["body", "身體數值"], ["food", "飲食"], ["water", "飲水"], ["sleep", "睡眠"], ["supplement", "營養品"], ["exercise", "運動"]],
   care: [["injection", "施打"], ["symptoms", "生理狀況"], ["expense", "開銷"]],
   review: [["calendar", "月曆"], ["insights", "統計與目標"]],
 };
@@ -60,9 +60,9 @@ const NAV_ICONS: Record<string, React.ReactNode> = {
   review: <svg viewBox="0 0 24 24"><path d="M4.5 20.5h15"/><path d="M6.5 20V11.5"/><path d="M12 20V4.5"/><path d="M17.5 20v-6"/></svg>,
   profile: <svg viewBox="0 0 24 24"><circle cx="12" cy="8.2" r="3.9"/><path d="M4.6 20.6c.8-3.6 3.8-5.6 7.4-5.6s6.6 2 7.4 5.6"/></svg>,
 };
-const RECORDS = ["body", "symptoms", "food", "water", "supplement", "exercise", "injection", "expense"] as const;
+const RECORDS = ["body", "symptoms", "food", "water", "sleep", "supplement", "exercise", "injection", "expense"] as const;
 type Record0 = typeof RECORDS[number];
-const RECORD_GLYPHS: Record<Record0, string> = { body: "◌", symptoms: "♡", food: "◇", water: "◒", supplement: "✽", exercise: "△", injection: "+", expense: "¤" };
+const RECORD_GLYPHS: Record<Record0, string> = { body: "◌", symptoms: "♡", food: "◇", water: "◒", sleep: "☾", supplement: "✽", exercise: "△", injection: "+", expense: "¤" };
 const DRINKS = ["白開水", "無糖茶", "黑咖啡", "氣泡水", "湯品"] as const;
 const CATS = [
   ["/cat-white.jpg", "白貓"], ["/cat-tabby.jpg", "虎斑貓"], ["/cat-orange.jpg", "橘貓"],
@@ -123,6 +123,15 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
   },[]);
   useEffect(()=>{ if(healthReady&&!healthSyncedOnce.current){ healthSyncedOnce.current=true; importHealth(true); } },[healthReady,importHealth]);
   function chooseCat(value:string){ setCat(value); localStorage.setItem("catcare-cat",value); }
+  // 「我要記錄什麼」的勾選即存：更新畫面後延遲送出，不需要按儲存
+  const persistTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
+  const persistProfile=useCallback((next:ProfileData)=>{
+    setProfile(next);
+    if(persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current=setTimeout(()=>{
+      fetch("/api/profile",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(next)}).catch(()=>{});
+    },600);
+  },[]);
   function flash(message:string){ setNotice(message); setTimeout(()=>setNotice(""),2500); }
   async function saveData(category:string,recordedAt:string,data:Data){
     // 同一天、同一類別的所有既有紀錄＋這筆新資料，統整成一筆（負數 id 是未回寫完成的草稿，不動）。
@@ -186,11 +195,11 @@ export default function CatCareApp({section,user,local=false}:{section:string;us
     {active==="home"&&<Dashboard entries={entries} profile={profile} series={series} companion={companion} companionState={companionState}/>}
     {active==="body"&&<Body entries={entries} profile={profile} save={save}/>} {active==="symptoms"&&<Symptoms entries={entries} save={save}/>}
     {active==="food"&&<Food entries={entries} profile={profile} save={save}/>} {active==="water"&&<Water entries={entries} save={save} saveData={saveData}/>}
-    {active==="supplement"&&<Supplement entries={entries} save={save}/>} {active==="expense"&&<Expense entries={entries} save={save}/>}
-    {active==="exercise"&&<Exercise entries={entries} save={save} companion={companion}/>} {active==="injection"&&<Injection entries={entries} save={save}/>}
+    {active==="sleep"&&<Sleep entries={entries} save={save}/>} {active==="supplement"&&<Supplement entries={entries} save={save}/>} {active==="expense"&&<Expense entries={entries} save={save}/>}
+    {active==="exercise"&&<Exercise entries={entries} save={save} companion={companion} profile={profile} series={series}/>} {active==="injection"&&<Injection entries={entries} save={save}/>}
     {active==="calendar"&&<CalendarPage entries={entries}/>} {active==="insights"&&<Insights entries={entries} profile={profile} series={series} companion={companion}/>}
     {active==="profile"&&<Profile user={user} profile={profile} setProfile={setProfile} local={local} cat={cat} chooseCat={chooseCat}
-      healthSync={healthReady?<HealthSyncSection importHealth={importHealth} last={healthLast}/>:undefined}/>}
+      healthSync={healthReady?<HealthSyncSection importHealth={importHealth} last={healthLast}/>:undefined} persistProfile={persistProfile}/>}
   </main></div></RemoveEntry.Provider></ProfileContext.Provider>;
 }
 
@@ -535,7 +544,9 @@ const healthItemText=(item:HealthImport)=>{
     const parts=[d.weight!==undefined&&`體重 ${d.weight} kg`,d.fat!==undefined&&`體脂 ${d.fat} %`,d.muscle!==undefined&&`瘦體重 ${d.muscle} kg`].filter(Boolean);
     return `${parts.join("、")}（${d.machine||"Apple 健康"}）`;
   }
-  return `${d.activity} ${d.minutes} 分鐘、${d.calories} kcal`;
+  if(d.activity) return `${d.activity} ${d.minutes} 分鐘、${d.calories} kcal`;
+  const parts=[d.calories!==undefined&&`動態 ${d.calories} kcal`,d.bmr!==undefined&&`靜態 ${d.bmr} kcal`,d.tdee!==undefined&&`合計 ${d.tdee} kcal`].filter(Boolean);
+  return parts.join("、");
 };
 const timeText=(iso:string)=>{const t=new Date(iso);return Number.isNaN(t.getTime())?"":`${formatDate(toDateKey(t))} ${String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}`};
 
@@ -555,7 +566,7 @@ function HealthSyncSection({importHealth,last}:{importHealth:(silent:boolean)=>P
   const when=justNow?"本次":last?`上次（${timeText(last.at)}）`:"";
   return <>
     <h3>健康資料同步</h3>
-    <p className="profile-note">從 Apple「健康」帶入體重、體脂、瘦體重與運動（Garmin Connect 同步進健康的資料也包含在內）。帶入的數字會直接寫進當天的「身體數值」和「運動」紀錄，並標記來源；不會蓋掉你手動輸入的資料。</p>
+    <p className="profile-note">從 Apple「健康」帶入體重、體脂、瘦體重，以及每天的動態能量（活動熱量）與靜態能量（基礎熱量）——Garmin Connect 同步進健康的資料也包含在內。帶入的數字會直接寫進當天的「身體數值」和「運動消耗」紀錄，並標記來源；不會蓋掉你手動輸入的資料。</p>
     <div className="health-sync-actions">
       <button type="button" className="primary" onClick={()=>run(true)} disabled={busy}>{busy?"處理中…":"連結 Apple 健康"}</button>
       <button type="button" onClick={()=>run(false)} disabled={busy}>立即同步</button>
@@ -564,7 +575,7 @@ function HealthSyncSection({importHealth,last}:{importHealth:(silent:boolean)=>P
     <div className="health-sync-result">
       {shown.length?<>
         <p className="field-heading">{when}帶入的數字</p>
-        <ul>{shown.map((item,i)=><li key={`${item.category}-${item.recordedAt}-${i}`}><time>{formatDate(item.recordedAt)}</time><b>{item.category==="body"?"身體數值":"運動"}</b><span>{healthItemText(item)}</span></li>)}</ul>
+        <ul>{shown.map((item,i)=><li key={`${item.category}-${item.recordedAt}-${i}`}><time>{formatDate(item.recordedAt)}</time><b>{item.category==="body"?"身體數值":"能量"}</b><span>{healthItemText(item)}</span></li>)}</ul>
         <p className="profile-note">到 <Link href="/body">身體數值</Link>、<Link href="/exercise">運動</Link> 頁可看到這些紀錄，列上會標示「Apple 健康」。</p>
       </>:<p className="profile-note">{last?`上次檢查：${timeText(last.checkedAt??last.at)}，`:""}還沒有從 Apple 健康帶入任何數字。若已連結卻沒有資料，請確認「健康」App 裡最近 7 天有體重或運動紀錄，並在權限設定裡允許讀取。<button type="button" className="link-button" onClick={openSettings}>打開權限設定</button></p>}
     </div>
@@ -641,7 +652,7 @@ function ShareCard({goal,program,marksDone,companion}:{goal:GoalProgress;program
 
 /* ---------- 個人資料 ---------- */
 
-function Profile({user,profile,setProfile,local,cat,chooseCat,healthSync}:{user:User;profile:ProfileData;setProfile:(value:ProfileData)=>void;local:boolean;cat:string;chooseCat:(value:string)=>void;healthSync?:React.ReactNode}){
+function Profile({user,profile,setProfile,local,cat,chooseCat,healthSync,persistProfile}:{user:User;profile:ProfileData;setProfile:(value:ProfileData)=>void;local:boolean;cat:string;chooseCat:(value:string)=>void;healthSync?:React.ReactNode;persistProfile:(value:ProfileData)=>void}){
   const [message,setMessage]=useState("");
   async function submit(e:FormEvent<HTMLFormElement>){
     e.preventDefault();
@@ -667,15 +678,15 @@ function Profile({user,profile,setProfile,local,cat,chooseCat,healthSync}:{user:
         {RECORD_CATEGORIES.map(category=>{
           const on=isRecordVisible(profile,category);
           return <div key={category} className={`record-row${on?"":" off"}`}>
-            <label className="record-switch"><input type="checkbox" checked={on} onChange={e=>setProfile(toggleRecord(profile,category,e.target.checked))}/><b>{LABELS[category]}</b><small>{on?"記錄中":"已關閉，資料保留"}</small></label>
+            <label className="record-switch"><input type="checkbox" checked={on} onChange={e=>persistProfile(toggleRecord(profile,category,e.target.checked))}/><b>{LABELS[category]}</b><small>{on?"記錄中":"已關閉，資料保留"}</small></label>
             {on&&<div className="record-fields">{RECORD_FIELDS[category].map(field=>{
               const locked=field.locked===true,checked=isFieldVisible(profile,category,field.key);
-              return <label key={field.key} className={locked?"locked":""}><input type="checkbox" checked={checked} disabled={locked} onChange={e=>setProfile(toggleField(profile,category,field.key,e.target.checked))}/>{field.label}</label>;
+              return <label key={field.key} className={locked?"locked":""}><input type="checkbox" checked={checked} disabled={locked} onChange={e=>persistProfile(toggleField(profile,category,field.key,e.target.checked))}/>{field.label}</label>;
             })}</div>}
           </div>;
         })}
       </div>
-      <p className="profile-note">關閉的類別會從導覽、快速補記與今日任務消失；取消勾選的欄位不會出現在表單上。隨時可以再打開，已經記錄的資料都會保留。設定完請按下方「儲存個人資料」。</p>
+      <p className="profile-note">關閉的類別會從導覽、快速補記與今日任務消失；取消勾選的欄位不會出現在表單上。勾選後自動儲存，隨時可以再打開，已經記錄的資料都會保留。</p>
       <h3>陪伴小貓</h3>
       <div className="companion-picker">
         {COMPANIONS.map(option=><button type="button" key={option.id} className={companionByPhoto(cat).id===option.id?"picked":""} onClick={()=>chooseCat(option.photo)} aria-label={`選擇 ${option.name} 當陪伴小貓`} aria-pressed={companionByPhoto(cat).id===option.id}>
@@ -744,7 +755,7 @@ function SymptomFields({entries}:{entries:Entry[]}){
   function add(){const name=custom.trim();if(!name||items.includes(name))return;const next=[...items,name];setItems(next);setSelected(all=>[...all,name]);setCustom("");localStorage.setItem("catcare-symptoms",JSON.stringify(next.filter(x=>!SYMPTOMS.includes(x as typeof SYMPTOMS[number]))))}
   return <div className="symptom-editor"><span className="field-heading">今日狀況（可複選）</span><div className="custom-symptom"><input value={custom} onChange={e=>setCustom(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();add()}}} placeholder="輸入其他狀況" aria-label="新增自訂生理狀況"/><button type="button" onClick={add}>+新增</button></div>{items.map(name=><div className={`symptom-row ${selected.includes(name)?"chosen":""}`} key={name}><label className="symptom-check"><input type="checkbox" name={`symptom_${name}`} value={name} checked={selected.includes(name)} onChange={()=>toggle(name)}/><b>{name}</b></label>{selected.includes(name)&&<fieldset><legend>{name}嚴重程度</legend>{Array.from({length:11},(_,n)=><label key={n}><input type="radio" name={`severity_${name}`} value={n} defaultChecked={n===1}/><span>{n}</span></label>)}</fieldset>}</div>)}</div>
 }
-function Symptoms({entries,save}:{entries:Entry[];save:Save}){const profile=useContext(ProfileContext);return <><Panel title="每日生理狀況" sub="溫柔觀察身體的訊號，需要時就向醫療人員求助。" img="/cat-white.jpg"><Form cat="symptoms" save={save}><Field label="日期" name="recordedAt" type="date"/>{isFieldVisible(profile,"symptoms","symptoms")&&<SymptomFields entries={entries}/>}<Field label="備註" name="notes"><input name="notes" placeholder="何時發生、持續多久…"/></Field></Form></Panel><div className="alert">若有持續劇烈腹痛、無法進食飲水、意識改變等情形，請立即聯繫醫療人員或急診。</div><History entries={entries} cat="symptoms"/></>}
+function Symptoms({entries,save}:{entries:Entry[];save:Save}){const profile=useContext(ProfileContext);return <><Panel title="每日生理狀況" sub="溫柔觀察身體的訊號，需要時就向醫療人員求助。" img="/cat-white.jpg"><Form cat="symptoms" save={save}><Field label="日期" name="recordedAt" type="date"/>{isFieldVisible(profile,"symptoms","symptoms")&&<SymptomFields entries={entries}/>}<Field label="生理期" name="period"><select name="period"><option value="">未設定</option><option>來潮（第一天）</option><option>經期中</option><option>經期結束</option></select></Field><Field label="備註" name="notes"><input name="notes" placeholder="何時發生、持續多久…"/></Field></Form></Panel><div className="alert">若有持續劇烈腹痛、無法進食飲水、意識改變等情形，請立即聯繫醫療人員或急診。</div><History entries={entries} cat="symptoms"/></>}
 
 function Food({entries,profile,save}:{entries:Entry[];profile:ProfileData;save:Save}){
   const [db,setDb]=useState<FoodDb|null>(null),[dbFailed,setDbFailed]=useState(false);
@@ -817,6 +828,24 @@ function Expense({entries,save}:{entries:Entry[];save:Save}){
   const items=[...new Set([...["週纖達 Wegovy","猛健樂 Mounjaro","回診掛號費","營養品"],...old.map(e=>String(e.data.item)).filter(Boolean)])];
   return <><Panel title="開銷紀錄" sub="療程的每一筆花費都記下來，統計頁會幫你算總帳。" img="/cat-tabby.jpg"><Form cat="expense" save={save}><Field label="日期" name="recordedAt" type="date"/><Field label="品項" name="item"><><input name="item" list="expense-items" placeholder="例：週纖達 Wegovy"/><datalist id="expense-items">{items.map(x=><option key={x}>{x}</option>)}</datalist></></Field><Field label="金額 (NT$)" name="amount"><input name="amount" type="number" min="0" step="1" placeholder="整數金額"/></Field><Field label="數量" name="qty"><input name="qty" placeholder="例：1 支、2 盒"/></Field><Field label="備註" name="notes"><input name="notes" placeholder="藥局、醫院…"/></Field></Form></Panel><History entries={entries} cat="expense"/></>}
 
+function Sleep({entries,save}:{entries:Entry[];save:Save}){
+  const [bedtime,setBedtime]=useState(""),[waketime,setWaketime]=useState(""),[hours,setHours]=useState("");
+  // 填了就寢與起床時間就自動算時數（跨夜自動 +24），仍可手動修改
+  function autoHours(bed:string,wake:string){
+    if(!bed||!wake) return;
+    const [bh,bm]=bed.split(":").map(Number),[wh,wm]=wake.split(":").map(Number);
+    let diff=(wh*60+wm)-(bh*60+bm); if(diff<=0) diff+=24*60;
+    setHours(String(Math.round(diff/60*10)/10));
+  }
+  function submit(category:string,form:HTMLFormElement){save(category,form);setBedtime("");setWaketime("");setHours("");}
+  return <><Panel title="睡眠紀錄" sub="睡得夠，身體才有力氣慢慢改變。" img="/cat-white.jpg"><Form cat="sleep" save={submit}>
+    <Field label="日期" name="recordedAt" type="date"/>
+    <Field label="睡眠時數 (小時)" name="hours"><input name="hours" type="number" min="0" max="24" step="0.5" value={hours} onChange={e=>setHours(e.target.value)} placeholder="例：7.5"/></Field>
+    <Field label="就寢時間" name="bedtime"><input name="bedtime" type="time" value={bedtime} onChange={e=>{setBedtime(e.target.value);autoHours(e.target.value,waketime)}}/></Field>
+    <Field label="起床時間" name="waketime"><input name="waketime" type="time" value={waketime} onChange={e=>{setWaketime(e.target.value);autoHours(bedtime,e.target.value)}}/></Field>
+    <Field label="備註" name="notes"><input name="notes" placeholder="睡眠品質、半夜醒來…"/></Field>
+  </Form></Panel><History entries={entries} cat="sleep"/></>}
+
 function Supplement({entries,save}:{entries:Entry[];save:Save}){
   const old=entries.filter(e=>e.category==="supplement");
   const names=[...new Set(old.map(e=>String(e.data.name)).filter(Boolean))];
@@ -860,9 +889,18 @@ function Injection({entries,save}:{entries:Entry[];save:Save}){
       </table></div>
     </>:<p className="empty">還沒有施打紀錄，從第一針開始記吧。</p>}
   </div></>}
-function Exercise({entries,save,companion}:{entries:Entry[];save:Save;companion:Companion}){
-  const [calories,setCalories]=useState(""),[bmr,setBmr]=useState("");
-  // 當日總消耗＝基礎代謝＋消耗熱量，自動加總不用另外輸入
+function Exercise({entries,save,companion,profile,series}:{entries:Entry[];save:Save;companion:Companion;profile:ProfileData;series:WeightPoint[]}){
+  // 靜態能量（基礎代謝）依身高、體重、年齡、生理性別估算，可手動修改
+  const estimated=estimateBmr(profile,series.at(-1)?.weight??0);
+  const [calories,setCalories]=useState(""),[bmrInput,setBmrInput]=useState<string|null>(null);
+  // 沒手動改過就跟著估算值走（profile 載入完成後會自動帶入）
+  const bmr=bmrInput??(estimated!==null?String(estimated):"");
   const tdee=(Number(calories)||0)+(Number(bmr)||0);
-  function submit(category:string,form:HTMLFormElement){save(category,form);setCalories("");setBmr("");}
-  return <><Panel title="運動與每日消耗" sub="不求快，只求穩穩地把活動放進生活。小貓也一起原地踏步。" figure={<CompanionCat companion={companion} state="exercise" size={230} className="panel-cat"/>}><Form cat="exercise" save={submit}><Field label="日期" name="recordedAt" type="date"/><Field label="運動項目" name="activity"><input name="activity" placeholder="例：快走、重訓"/></Field><Field label="時間 (分鐘)" name="minutes"/><Field label="消耗熱量 (kcal)" name="calories"><input name="calories" type="number" min="0" value={calories} onChange={e=>setCalories(e.target.value)}/></Field><Field label="基礎代謝 BMR (kcal)" name="bmr"><input name="bmr" type="number" min="0" value={bmr} onChange={e=>setBmr(e.target.value)}/></Field><Field label="當日總消耗 TDEE (kcal)" name="tdee"><input name="tdee" type="number" value={tdee||""} readOnly placeholder="自動加總"/></Field></Form></Panel><History entries={entries} cat="exercise"/></>}
+  function submit(category:string,form:HTMLFormElement){save(category,form);setCalories("");setBmrInput(null);}
+  return <><Panel title="每日能量消耗" sub="動態能量從 Apple 健康自動帶入，靜態能量依個人資料估算。" figure={<CompanionCat companion={companion} state="exercise" size={230} className="panel-cat"/>}><Form cat="exercise" save={submit}>
+    <Field label="日期" name="recordedAt" type="date"/>
+    <Field label="運動時間 (分鐘)" name="minutes"/>
+    <Field label="動態能量 (kcal)" name="calories"><input name="calories" type="number" min="0" value={calories} onChange={e=>setCalories(e.target.value)} placeholder="活動消耗，iOS 會自動帶入"/></Field>
+    <Field label="靜態能量 (kcal)" name="bmr"><><input name="bmr" type="number" min="0" value={bmr} onChange={e=>setBmrInput(e.target.value)} placeholder="基礎代謝"/>{estimated!==null&&<p className="field-note">依身高 {profile.height} cm、目前體重與年齡估算為 {estimated} kcal，可自行修改</p>}</></Field>
+    <Field label="當日總消耗 TDEE (kcal)" name="tdee"><input name="tdee" type="number" value={tdee||""} readOnly placeholder="自動加總"/></Field>
+  </Form></Panel><History entries={entries} cat="exercise"/></>}

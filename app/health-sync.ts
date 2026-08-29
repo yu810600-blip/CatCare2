@@ -8,7 +8,9 @@
  * 支援 Capacitor 8 + SPM 的（@perfood/capacitor-healthkit 停在 Capacitor 4、
  * 無 Package.swift）。代價是它沒有飲水與基礎能量的讀取介面，所以只匯入：
  *   體重 kg／體脂 %／瘦體重 kg → body（測量機器欄填資料來源名稱）
- *   workout 名稱/分鐘/活動卡路里 → exercise
+ *   每日動態能量（活動熱量）→ exercise.calories、靜態能量（基礎熱量）→
+ *   exercise.bmr（只帶已結束的日子）。capacitor-health 沒有靜態能量介面，
+ *   由 App 內建的 BasalEnergyPlugin（ios/App/App/BasalEnergyPlugin.swift）補上。
  *
  * 防重複：每筆匯入 entry 的 data 帶 source 與 externalId，同步時先比對已存在
  * 的 externalId 跳過；使用者手動輸入的紀錄沒有 externalId，完全不受影響。
@@ -25,6 +27,20 @@ const round1 = (value: number) => Math.round(value * 10) / 10;
  * 會被當成 thenable 呼叫 Health.then()，promise 永遠不會 resolve。
  */
 type HealthApi = { health: Awaited<typeof import("capacitor-health")>["Health"] };
+
+// App 內建的本地 plugin（ios/App/App/BasalEnergyPlugin.swift），補讀靜態能量
+type BasalPlugin = {
+  requestPermission(): Promise<{ granted: boolean }>;
+  queryDaily(options: { startDate: string; endDate: string }): Promise<{ days: { date: string; kcal: number }[] }>;
+};
+let basalPlugin: BasalPlugin | null = null;
+// 同樣不能直接回傳 Proxy（thenable 陷阱），包在物件裡
+async function basal(): Promise<{ api: BasalPlugin } | null> {
+  const { Capacitor, registerPlugin } = await import("@capacitor/core");
+  if (!Capacitor.isNativePlatform()) return null;
+  basalPlugin ??= registerPlugin<BasalPlugin>("BasalEnergy");
+  return { api: basalPlugin };
+}
 
 async function plugin(): Promise<HealthApi | null> {
   const { Capacitor } = await import("@capacitor/core");
@@ -45,21 +61,12 @@ export async function connectAppleHealth(): Promise<boolean> {
     const api = await plugin();
     if (!api) return false;
     await api.health.requestHealthPermissions({ permissions: [...PERMISSIONS] });
+    try { await (await basal())?.api.requestPermission(); } catch { /* 靜態能量拿不到權限就用估算 */ }
     return true;
   } catch { return false; }
 }
 
 export type HealthImport = { category: string; recordedAt: string; data: Data };
-
-// HealthKit 的運動類型是英文代號，顯示成中文；沒對到的原樣保留
-const WORKOUT_NAMES: Record<string, string> = {
-  running: "跑步", walking: "健走", cycling: "騎自行車", swimming: "游泳", hiking: "健行",
-  yoga: "瑜伽", elliptical: "滑步機", rowing: "划船", stairs: "爬梯", dance: "舞蹈", core: "核心訓練",
-  traditionalStrengthTraining: "重訓", functionalStrengthTraining: "功能性訓練",
-  highIntensityIntervalTraining: "高強度間歇", mixedCardio: "混合有氧", pilates: "皮拉提斯",
-  other: "其他運動",
-};
-const workoutName = (type: string) => WORKOUT_NAMES[type] ?? type;
 
 /** 讀最近 days 天的健康資料，回傳「還不存在」的新紀錄（比對 externalId）。 */
 export async function fetchHealthEntries(existing: Entry[], days = 7): Promise<HealthImport[]> {
@@ -104,25 +111,37 @@ export async function fetchHealthEntries(existing: Entry[], days = 7): Promise<H
     out.push({ category: "body", recordedAt: day, data });
   }
 
-  // 運動：每個 workout 一筆 exercise
+  // 能量：每天的動態（活動）與靜態（基礎）熱量合計，合成一筆 exercise。
+  // 只帶「已結束的日子」（不含今天）——今天的數字還在增加，一旦匯入就被
+  // externalId 鎖住，會停在不完整的值。
+  const today = toDateKey(new Date());
+  const active = new Map<string, number>();
+  const basalByDay = new Map<string, number>();
   try {
-    const { workouts } = await health.queryWorkouts({ ...range, includeHeartRate: false, includeRoute: false, includeSteps: false });
-    for (const workout of workouts) {
-      const day = toDateKey(new Date(workout.startDate));
-      const externalId = workout.id ? `hk-workout-${workout.id}` : `hk-workout-${workout.startDate}-${workout.workoutType}`;
-      if (known.has(externalId)) continue;
-      out.push({
-        category: "exercise", recordedAt: day,
-        data: {
-          activity: workoutName(workout.workoutType || "other"),
-          minutes: Math.round(workout.duration / 60),
-          calories: Math.round(workout.calories),
-          ...(workout.distance ? { distance: Math.round(workout.distance / 10) / 100 } : {}),
-          source: "healthkit", externalId,
-        },
-      });
+    const { aggregatedData } = await health.queryAggregated({ ...range, dataType: "active-calories", bucket: "day" });
+    for (const sample of aggregatedData) {
+      const kcal = Math.round(sample.value);
+      if (kcal > 0) active.set(toDateKey(new Date(sample.startDate)), kcal);
     }
   } catch { /* 沒權限就略過 */ }
+  try {
+    const wrapped = await basal();
+    if (wrapped) for (const day of (await wrapped.api.queryDaily(range)).days) {
+      const kcal = Math.round(day.kcal);
+      if (kcal > 0) basalByDay.set(day.date, kcal);
+    }
+  } catch { /* 靜態能量沒權限就略過 */ }
+  for (const day of new Set([...active.keys(), ...basalByDay.keys()])) {
+    if (day >= today) continue;
+    const externalId = `hk-energy-${day}`;
+    if (known.has(externalId) || known.has(`hk-active-${day}`)) continue;
+    const calories = active.get(day), bmr = basalByDay.get(day);
+    const data: Data = { source: "healthkit", externalId };
+    if (calories !== undefined) data.calories = calories;
+    if (bmr !== undefined) data.bmr = bmr;
+    if (calories !== undefined || bmr !== undefined) data.tdee = (calories ?? 0) + (bmr ?? 0);
+    out.push({ category: "exercise", recordedAt: day, data });
+  }
 
   return out;
 }
